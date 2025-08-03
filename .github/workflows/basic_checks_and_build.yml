@@ -1,0 +1,32 @@
+name: Rust CI
+
+on:
+
+  push:
+    branches: [ "main" ]
+
+  pull_request:
+    branches: [ "main" ]
+
+
+
+jobs:
+
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Formatting
+        run: cargo fmt -- --check
+
+        # TODO: Modify later using -D warnings to ensure all warnings are treated as errors.
+      - name: Run Clippy
+        run: cargo clippy 
+
+      - name: Run tests
+        run: cargo test --verbose

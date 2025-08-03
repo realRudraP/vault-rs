@@ -1,9 +1,9 @@
-use std::io;
 use serde_json;
+use std::io;
 
 use crate::core::crypto::CryptoError;
 #[derive(Debug)]
-pub enum VaultError{
+pub enum VaultError {
     Io(io::Error),
     Serialization,
     Crypto(String),
@@ -22,7 +22,7 @@ impl From<CryptoError> for VaultError {
     }
 }
 
-impl From<std::io::Error> for VaultError{
+impl From<std::io::Error> for VaultError {
     fn from(value: std::io::Error) -> Self {
         VaultError::Io(value)
     }

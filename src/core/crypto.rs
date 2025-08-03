@@ -1,5 +1,6 @@
 use aes_gcm::{
-    aead::{rand_core::RngCore, Aead, KeyInit, OsRng}, AeadCore, Aes256Gcm, Nonce
+    AeadCore, Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
 };
 
 use argon2::{
@@ -56,7 +57,7 @@ pub enum CryptoError {
     /// - Memory allocation fails during hashing
     /// - Salt format is invalid
     #[error("Key derivation error: {0}")]
-    Argon2( argon2::password_hash::Error),
+    Argon2(argon2::password_hash::Error),
 
     /// Error during AES-GCM encryption or decryption.
     ///
@@ -87,7 +88,6 @@ pub enum CryptoError {
     NotImplemented(String),
 }
 
-
 // =============================================================================
 // SECURE KEY WRAPPER
 // =============================================================================
@@ -108,12 +108,12 @@ impl SecureKey {
     pub fn as_slice(&self) -> &[u8] {
         &self.0
     }
-    
-    pub fn split_into_keys(&self,mid:usize)->(SecureKey,SecureKey){
-        let (left,right)= self.0.split_at(mid);
+
+    pub fn split_into_keys(&self, mid: usize) -> (SecureKey, SecureKey) {
+        let (left, right) = self.0.split_at(mid);
         (
             SecureKey::new(left.to_vec()),
-            SecureKey::new(right.to_vec())
+            SecureKey::new(right.to_vec()),
         )
     }
 }
@@ -261,13 +261,12 @@ pub fn derive_key_from_password_and_salt(
     Ok(key)
 }
 
-pub fn generate_dek()->Result<SecureKey,CryptoError>{
-    let mut dek=[0u8;64];
+pub fn generate_dek() -> Result<SecureKey, CryptoError> {
+    let mut dek = [0u8; 64];
     OsRng.try_fill_bytes(&mut dek).unwrap();
-    let master_dek:Vec<u8>=dek.to_vec();
+    let master_dek: Vec<u8> = dek.to_vec();
     Ok(SecureKey::new(master_dek))
 }
-
 
 // =============================================================================
 // ENCRYPTION/DECRYPTION FUNCTIONS
