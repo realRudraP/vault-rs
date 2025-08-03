@@ -1,6 +1,6 @@
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use criterion::{ criterion_group, criterion_main, Criterion};
-use vault_core::core::crypto::{derive_new_key, encrypt, decrypt};
+use vault_core::core::crypto::{decrypt, derive_new_key, encrypt};
 
 const TEST_PASSWORD: &str = "a-very-STRONG-and-SECRET-password-!@#$";
 const TEST_DATA: &[u8] = b"pdhrfmbejabgtbtxovoqdurdinuyynntunyjrzsugdtaflxqlxxpnctcoxphjohigyybxlgxgnwnigvqeqsimdibrmsznwmxymlk";
@@ -13,11 +13,11 @@ fn benchmark_key_derivation(c: &mut Criterion) {
     });
 }
 
-fn benchmark_encryption_decryption(c: &mut Criterion){
-    let (_salt,key)=derive_new_key(TEST_PASSWORD).expect("Key derivation failed");
-    let encrypted_data=encrypt(TEST_DATA, &key).unwrap();
+fn benchmark_encryption_decryption(c: &mut Criterion) {
+    let (_salt, key) = derive_new_key(TEST_PASSWORD).expect("Key derivation failed");
+    let encrypted_data = encrypt(TEST_DATA, &key).unwrap();
 
-    let mut group= c.benchmark_group("AES-256-GCM");
+    let mut group = c.benchmark_group("AES-256-GCM");
     group.bench_function("encryption", |b| {
         b.iter(|| {
             encrypt(black_box(TEST_DATA), black_box(&key)).unwrap();
@@ -31,5 +31,9 @@ fn benchmark_encryption_decryption(c: &mut Criterion){
     group.finish();
 }
 
-criterion_group!(benches, benchmark_key_derivation, benchmark_encryption_decryption);
+criterion_group!(
+    benches,
+    benchmark_key_derivation,
+    benchmark_encryption_decryption
+);
 criterion_main!(benches);
