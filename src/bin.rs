@@ -2,10 +2,9 @@ use clap::{Parser, Subcommand};
 use rustyline::DefaultEditor;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
+    collections::HashMap, fs, path::{Path, PathBuf}
 };
-use vault_core::{VaultError, VaultManager};
+use vault_core::{core::vault, VaultError, VaultManager};
 #[derive(Parser, Debug)]
 #[command(name = "vault")]
 #[command(about= "A secure file vault.",long_about=None)]
@@ -30,6 +29,14 @@ enum Commands {
     Unlock {
         #[arg(short, long, help = "Name of the vault to unlock")]
         name: String,
+    },
+    Import{
+        host_path:String,
+        #[arg(short='v',long)]
+        vault_name:String,
+        #[arg(short='p',long)]
+        vault_path:Option<String>,
+
     },
 }
 
@@ -97,7 +104,38 @@ fn main() {
                     name
                 );
             }
+        },
+        Commands::Import { host_path, vault_name, vault_path } => {
+    let password: String = rpassword::prompt_password("Enter vault password: ").expect("Failed to read password");
+    if manager.unlock_vault(&vault_name, &password).is_ok() {
+        let content = fs::read(&host_path)
+            .expect("Failed to read file from host path");
+        
+        let vault_destination = match vault_path {
+            Some(path) => PathBuf::from(path),
+            None => {
+                // Extract filename from host_path and store in root directory
+                let host_file = std::path::Path::new(&host_path);
+                let filename = host_file.file_name()
+                    .expect("Invalid host path - no filename")
+                    .to_str()
+                    .expect("Invalid filename encoding");
+                PathBuf::from("/").join(filename)
+            }
+        };
+        
+        if let Ok(()) = manager.import_file(&vault_name, &vault_destination, &content) {
+
+        } else {
+            eprintln!("Failed to import file into vault '{}'.", vault_name);
         }
+    } else {
+        eprintln!(
+            "Failed to unlock vault '{}'. Please check the name and password.",
+            vault_name
+        );
+    }
+}
     }
 }
 
@@ -153,6 +191,14 @@ enum ShellCommands {
         recursive: bool,
     },
     Clear,
+    Import{
+        host_path:String,
+        #[arg(short,long)]
+        vault_name:String,
+        #[arg(short,long)]
+        vault_path:Option<String>,
+
+    },
     Help {
         command: Option<String>,
     },

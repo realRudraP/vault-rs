@@ -15,6 +15,7 @@ pub enum VaultError {
     InvalidURI,
     InvalidPath,
     UnableToAccessLocation(String),
+    Storage(String),
     Generic(String),
     Unknown(String),
 }
