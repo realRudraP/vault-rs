@@ -182,16 +182,24 @@ ____   ____            .__   __
         vault_name: &str,
         vault_path: &Path,
         content: &[u8],
-    )->Result<(),VaultError>{
-        let vault=self
-        .unlocked_vaults
-        .get(vault_name)
-        .ok_or(VaultError::VaultNotFound)?;
-        eprintln!("(manager)Importing file into vault '{}': {}", vault_name, vault_path.display());
-    vault.import_file(content, vault_path)?;
-    println!("Successfully imported into {}:{}", vault_name, vault_path.display());
-    Ok(())
-}
+    ) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Importing file into vault '{}': {}",
+            vault_name,
+            vault_path.display()
+        );
+        vault.import_file(content, vault_path)?;
+        println!(
+            "Successfully imported into {}:{}",
+            vault_name,
+            vault_path.display()
+        );
+        Ok(())
+    }
 }
 
 /// Helper functions for VaultManager go here

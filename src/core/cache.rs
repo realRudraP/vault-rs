@@ -195,7 +195,7 @@ impl DirectoryCache {
             let listing = vault
                 .get_directory_listing_from_blob_id(&child_metadata.blob_id)
                 .map_err(|_| VaultError::ResourceNotFound)?;
-            
+
             // An eviction occurs if the cache is full AND we are adding a new key.
             let is_full = internal.cache.len() == internal.cache.cap().get();
             let key_exists = internal.cache.contains(path);
@@ -210,7 +210,6 @@ impl DirectoryCache {
         let final_listing = last_fetched_listing.ok_or(VaultError::CacheInconsistent)?;
         Ok(final_listing.clone())
     }
-    
 
     /// Removes a path and all of its parent directories from the cache.
     pub fn invalidate_path_and_parents(&self, path: &Path) {
@@ -248,7 +247,10 @@ impl DirectoryCache {
         println!("  Hits: {}", stats.hits);
         println!("  Misses: {}", stats.misses);
         println!("  Evictions: {}", stats.evictions);
-        println!("  Current Size: {} / {}", stats.current_size, stats.max_size);
+        println!(
+            "  Current Size: {} / {}",
+            stats.current_size, stats.max_size
+        );
         println!("  Hit Rate: {:.2}%", stats.hit_rate * 100.0);
     }
 
@@ -261,7 +263,6 @@ impl DirectoryCache {
         internal.evictions = 0;
     }
 }
-
 
 // =============================================================================
 // TESTS
@@ -345,7 +346,10 @@ mod tests {
         // counter because it bypasses the public API where that counter is managed.
         let internal = cache.internal.lock().unwrap();
         assert_eq!(internal.cache.len(), 2);
-        assert!(!internal.cache.contains(&PathBuf::from("/b")), "Path /b should have been evicted");
+        assert!(
+            !internal.cache.contains(&PathBuf::from("/b")),
+            "Path /b should have been evicted"
+        );
         assert!(internal.cache.contains(&PathBuf::from("/a")));
         assert!(internal.cache.contains(&PathBuf::from("/c")));
     }
