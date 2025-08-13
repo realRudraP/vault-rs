@@ -112,7 +112,7 @@ impl DirectoryCache {
     ///
     /// This is the core method of the cache. It follows an intelligent fetch strategy:
     /// 1. First, it attempts a direct lookup in the cache for the requested `dir_path`.
-    /// 2. On a cache hit, it clones the listing and returns it immediately.
+    /// 2. On a cache hit, it clones the listing and returns it immediately along with its blob ID.
     /// 3. On a cache miss, it walks up the directory tree from `dir_path` until it finds
     ///    a cached parent directory.
     /// 4. It then fetches the required child directories sequentially from the vault,
@@ -125,10 +125,15 @@ impl DirectoryCache {
     ///
     /// # Returns
     ///
-    /// * `Ok(DirectoryListing)` - The requested directory listing.
+    /// * `Ok((DirectoryListing, String))` - The requested directory listing and the blob ID that contains it.
     /// * `Err(VaultError::ResourceNotFound)` - If the directory or one of its parents does not exist in the vault.
     /// * `Err(VaultError::CacheInconsistent)` - If the cache is in an unexpected state (e.g., a parent is missing when it should exist).
     /// * `Err(VaultError::InvalidPath)` - If the provided path is malformed.
+    ///
+    /// # Note
+    ///
+    /// This method assumes that `DirectoryListing` has a `blob_id` field that contains
+    /// the blob ID of the blob that stores this directory listing.
     pub fn get_directory_listing(
         &self,
         dir_path: &Path,
@@ -140,7 +145,7 @@ impl DirectoryCache {
         // Check if we have it in cache (cache hit)
         if let Some(listing) = internal.cache.get(&dir_path_buf).cloned() {
             internal.hits += 1;
-            return Ok(listing);
+            return Ok(listing.clone());
         }
 
         // It's a cache miss, proceed to fetch from vault
@@ -191,7 +196,6 @@ impl DirectoryCache {
                 .get_directory_listing_from_blob_id(&child_metadata.blob_id)
                 .map_err(|_| VaultError::ResourceNotFound)?;
 
-            // *** CORRECTED EVICTION LOGIC ***
             // An eviction occurs if the cache is full AND we are adding a new key.
             let is_full = internal.cache.len() == internal.cache.cap().get();
             let key_exists = internal.cache.contains(path);
@@ -203,7 +207,8 @@ impl DirectoryCache {
             last_fetched_listing = Some(listing);
         }
 
-        last_fetched_listing.ok_or(VaultError::CacheInconsistent)
+        let final_listing = last_fetched_listing.ok_or(VaultError::CacheInconsistent)?;
+        Ok(final_listing.clone())
     }
 
     /// Removes a path and all of its parent directories from the cache.
@@ -242,7 +247,10 @@ impl DirectoryCache {
         println!("  Hits: {}", stats.hits);
         println!("  Misses: {}", stats.misses);
         println!("  Evictions: {}", stats.evictions);
-        println!("  Current Size: {} / {}", stats.current_size, stats.max_size);
+        println!(
+            "  Current Size: {} / {}",
+            stats.current_size, stats.max_size
+        );
         println!("  Hit Rate: {:.2}%", stats.hit_rate * 100.0);
     }
 
@@ -255,7 +263,6 @@ impl DirectoryCache {
         internal.evictions = 0;
     }
 }
-
 
 // =============================================================================
 // TESTS
@@ -284,6 +291,7 @@ mod tests {
         let root_listing = DirectoryListing {
             directories: HashMap::new(),
             files: HashMap::new(),
+            blob_id: "root_blob_id".to_string(),
         };
         cache.init(root_listing);
 
@@ -302,7 +310,7 @@ mod tests {
     #[test]
     fn test_invalidation() {
         let cache = DirectoryCache::new(10);
-        let listing = DirectoryListing::default();
+        let listing = DirectoryListing::new("root_blob_id".to_string());
 
         {
             let mut internal = cache.internal.lock().unwrap();
@@ -318,7 +326,7 @@ mod tests {
     #[test]
     fn test_lru_eviction() {
         let cache = DirectoryCache::new(2);
-        let listing = DirectoryListing::default();
+        let listing = DirectoryListing::new("root_blob_id".to_string());
 
         {
             let mut internal = cache.internal.lock().unwrap();
@@ -338,7 +346,10 @@ mod tests {
         // counter because it bypasses the public API where that counter is managed.
         let internal = cache.internal.lock().unwrap();
         assert_eq!(internal.cache.len(), 2);
-        assert!(!internal.cache.contains(&PathBuf::from("/b")), "Path /b should have been evicted");
+        assert!(
+            !internal.cache.contains(&PathBuf::from("/b")),
+            "Path /b should have been evicted"
+        );
         assert!(internal.cache.contains(&PathBuf::from("/a")));
         assert!(internal.cache.contains(&PathBuf::from("/c")));
     }
@@ -346,8 +357,8 @@ mod tests {
     #[test]
     fn test_clear_cache() {
         let cache = DirectoryCache::new(5);
-        let listing = DirectoryListing::default();
-        
+        let listing = DirectoryListing::new("root_blob_id".to_string());
+
         {
             let mut internal = cache.internal.lock().unwrap();
             internal.cache.put(PathBuf::from("/a"), listing.clone());

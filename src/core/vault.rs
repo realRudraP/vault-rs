@@ -1,10 +1,11 @@
-use crate::core::crypto::{self, encrypt, generate_dek, SecureKey};
+use crate::core::cache::DirectoryCache;
+use crate::core::crypto::{self, SecureKey, encrypt, generate_dek};
 use crate::core::error::VaultError;
 use crate::core::storage::{StorageBackend, connect};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::core::cache::DirectoryCache;
+use std::path::Path;
 use uuid::Uuid;
 
 const CACHE_SIZE: usize = 100; // Default cache size
@@ -52,13 +53,21 @@ pub enum EntryType {
 // Represents the contents of the single file which contains the
 // directory listing blob.
 
-#[derive(Default, Serialize, Deserialize,Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DirectoryListing {
+    pub blob_id: String,
     pub directories: HashMap<String, EntryMetadata>,
     pub files: HashMap<String, EntryMetadata>,
 }
-
-
+impl DirectoryListing {
+    pub fn new(blob_id: String) -> Self {
+        DirectoryListing {
+            blob_id,
+            directories: HashMap::new(),
+            files: HashMap::new(),
+        }
+    }
+}
 
 // Represents an unlocked Vault in the memory. This is a stateless
 // toolkit for performing path based cryptographic and storage operations
@@ -83,7 +92,6 @@ pub struct UnlockedVault {
     directory_cache: DirectoryCache,
 }
 
-
 impl UnlockedVault {
     pub fn create(storage: Box<dyn StorageBackend>, password: &str) -> Result<Self, VaultError> {
         let main_dek = crypto::generate_dek().unwrap();
@@ -94,12 +102,11 @@ impl UnlockedVault {
         let encrypted_master_key = crypto::encrypt(main_dek.as_slice(), &kek)?;
 
         // Initial Vault Structure Set-up
-
-        let root_listing = DirectoryListing::default();
+        let root_blob_id = Uuid::new_v4().to_string();
+        let root_listing = DirectoryListing::new(root_blob_id.clone());
         let root_listing_json =
             serde_json::to_string(&root_listing).map_err(|_| VaultError::Serialization)?;
 
-        let root_blob_id = Uuid::new_v4().to_string();
         storage.store_blob(&root_blob_id, root_listing_json.as_bytes())?;
         println!("Created root blob with ID: {}", root_blob_id);
         let root_blob_encrypted_id = encrypt(root_blob_id.as_bytes(), &metadata_key)
@@ -124,7 +131,7 @@ impl UnlockedVault {
             content_key,
             metadata_key,
             root_directory: root_listing,
-            directory_cache
+            directory_cache,
         })
     }
 
@@ -151,14 +158,14 @@ impl UnlockedVault {
             .map_err(|_| VaultError::Serialization)?;
         let root_blob_id = crypto::decrypt(&root_blob_id, &metadata_key)
             .map_err(|_| VaultError::Crypto("Failed to decrypt root blob ID".to_string()))?;
-        let root_blob_id = String::from_utf8(root_blob_id)
-            .map_err(|_| VaultError::Serialization)?;
+        let root_blob_id =
+            String::from_utf8(root_blob_id).map_err(|_| VaultError::Serialization)?;
         println!("Decrypted root blob ID: {}", root_blob_id);
         let root_blob = storage.get_blob(&root_blob_id)?;
         let root_directory: DirectoryListing =
             serde_json::from_slice(&root_blob).map_err(|_| VaultError::Serialization)?;
         println!("Root directory listing loaded successfully.");
-        let mut directory_cache= DirectoryCache::new(CACHE_SIZE);
+        let directory_cache = DirectoryCache::new(CACHE_SIZE);
         directory_cache.init(root_directory.clone());
 
         Ok(Self {
@@ -170,10 +177,62 @@ impl UnlockedVault {
         })
     }
 
-    pub fn get_directory_listing_from_blob_id(&self, blob_id: &str) -> Result<DirectoryListing, VaultError> {
+    pub fn get_directory_listing_from_blob_id(
+        &self,
+        blob_id: &str,
+    ) -> Result<DirectoryListing, VaultError> {
         let blob = self.storage.get_blob(blob_id)?;
         let listing: DirectoryListing =
             serde_json::from_slice(&blob).map_err(|_| VaultError::Serialization)?;
         Ok(listing)
+    }
+
+    pub fn import_file(&self, data: &[u8], path: &Path) -> Result<(), VaultError> {
+        let encrypted_content = encrypt(data, &self.content_key).map_err(|e| {
+            VaultError::Crypto(format!("Failed to encrypt file {}: {}", path.display(), e))
+        })?;
+        eprintln!("(vault) Successfully encrypted file ");
+        let blob_id = Uuid::new_v4().to_string();
+        self.storage
+            .store_blob(&blob_id, &encrypted_content)
+            .map_err(|e| {
+                VaultError::Storage(format!("Failed to store file {}: {:#?}", path.display(), e))
+            })?;
+        eprintln!(
+            "(vault) Successfully stored file {} with blob ID: {}",
+            path.display(),
+            blob_id
+        );
+        let mut current_listing = self
+            .directory_cache
+            .get_directory_listing(path.parent().unwrap(), &self)?;
+        eprintln!("(vault) Current Directory Listing: {:#?}", current_listing);
+        let metadata = EntryMetadata {
+            entry_type: EntryType::File,
+            blob_id: blob_id.clone(),
+        };
+        current_listing.files.insert(
+            path.file_name().unwrap().to_string_lossy().into_owned(),
+            metadata,
+        );
+        let listing_json =
+            serde_json::to_string(&current_listing).map_err(|_| VaultError::Serialization)?;
+        self.storage
+            .store_blob(&current_listing.blob_id, &listing_json.as_bytes())
+            .map_err(|e| {
+                VaultError::Storage(format!("Failed to store file {}: {:#?}", path.display(), e))
+            })?;
+        eprintln!(
+            "(vault) Successfully updated directory listing for {} with blob id: {}",
+            path.display(),
+            blob_id
+        );
+        println!(
+            "File {} imported successfully with blob ID: {}",
+            path.display(),
+            blob_id
+        );
+        println!("Current Listing: {:#?}", current_listing);
+        Ok(())
     }
 }

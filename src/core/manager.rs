@@ -6,10 +6,12 @@
    URI, last opened time, and options.
 */
 
+use std::path::Path;
+
 use crate::core::crypto::SecureKey;
 use crate::core::error::VaultError;
 use crate::core::storage::{self, StorageBackend, connect};
-use crate::core::vault::UnlockedVault;
+use crate::core::vault::{self, UnlockedVault};
 use directories_next::ProjectDirs;
 use serde::{Deserialize, Serialize, ser};
 
@@ -160,6 +162,7 @@ ____   ____            .__   __
             // Update the content and metadata keys
             Ok(true)
         } else {
+            eprintln!("Failed to unlock vault '{}': Vault not found", name);
             Err(VaultError::VaultNotFound)
         }
     }
@@ -173,9 +176,33 @@ ____   ____            .__   __
         std::fs::write(manifest_path, data).map_err(|e| VaultError::Io(e))?;
         Ok(())
     }
+
+    pub fn import_file(
+        &self,
+        vault_name: &str,
+        vault_path: &Path,
+        content: &[u8],
+    ) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Importing file into vault '{}': {}",
+            vault_name,
+            vault_path.display()
+        );
+        vault.import_file(content, vault_path)?;
+        println!(
+            "Successfully imported into {}:{}",
+            vault_name,
+            vault_path.display()
+        );
+        Ok(())
+    }
 }
 
-// Helper functions for VaultManager go here
+/// Helper functions for VaultManager go here
 
 pub enum StorageLocations {
     Local(String),
