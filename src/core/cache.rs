@@ -105,7 +105,8 @@ impl DirectoryCache {
     /// * `root_listing` - The `DirectoryListing` for the vault's root path (`/`).
     pub fn init(&self, root_listing: DirectoryListing) {
         let mut internal = self.internal.lock().unwrap();
-        internal.cache.put(PathBuf::from("/"), root_listing);
+        internal.cache.put(PathBuf::from("/"), root_listing.clone());
+        internal.cache.put(PathBuf::from(""), root_listing.clone());
     }
 
     /// Retrieves a directory listing, using the cache if possible or fetching from the vault.

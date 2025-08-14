@@ -1,5 +1,5 @@
 use crate::core::cache::DirectoryCache;
-use crate::core::crypto::{self, SecureKey, encrypt, generate_dek};
+use crate::core::crypto::{self, SecureKey, decrypt, encrypt, generate_dek};
 use crate::core::error::VaultError;
 use crate::core::storage::{StorageBackend, connect};
 use base64::Engine;
@@ -234,5 +234,35 @@ impl UnlockedVault {
         );
         println!("Current Listing: {:#?}", current_listing);
         Ok(())
+    }
+
+    pub fn export_file(&self, path: &Path) -> Result<Vec<u8>, VaultError> {
+        let parent = path.parent().unwrap_or(Path::new("/"));
+
+        eprintln!("(vault) Exporting file from path: {}", parent.display());
+
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self)?;
+
+        eprintln!("(vault) Current listing: {:?}", current_listing);
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        let file_metadata = current_listing
+            .files
+            .get(file_name)
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        let blob_id = &file_metadata.blob_id;
+
+        let raw_blob_data = self
+            .storage
+            .get_blob(blob_id)
+            .map_err(|_| VaultError::ResourceNotFound)?;
+
+        let decrypted_blob = decrypt(&raw_blob_data, &self.content_key)?;
+        Ok(decrypted_blob)
     }
 }

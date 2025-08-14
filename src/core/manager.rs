@@ -200,6 +200,29 @@ ____   ____            .__   __
         );
         Ok(())
     }
+
+    pub fn export_file(
+        &self,
+        vault_name: &str,
+        vault_path: &Path,
+    ) -> Result<Vec<u8>, VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Exporting file from vault '{}': {}",
+            vault_name,
+            vault_path.display()
+        );
+        let content = vault.export_file(vault_path)?;
+        println!(
+            "Successfully exported from {}:{}",
+            vault_name,
+            vault_path.display()
+        );
+        Ok(content)
+    }
 }
 
 /// Helper functions for VaultManager go here
