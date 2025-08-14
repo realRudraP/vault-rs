@@ -3,7 +3,6 @@ use crate::core::crypto::{self, SecureKey, decrypt, encrypt, generate_dek};
 use crate::core::error::VaultError;
 use crate::core::storage::{StorageBackend, connect};
 use base64::Engine;
-use indexmap::map::raw_entry_v1;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
