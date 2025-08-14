@@ -39,6 +39,13 @@ enum Commands {
         #[arg(short = 'p', long)]
         vault_path: Option<String>,
     },
+    Export{
+        vault_path: String,
+        #[arg(short = 'v', long)]
+        vault_name: String,
+        #[arg(short = 'p', long)]
+        host_path: String,
+    }
 }
 
 // Represents a vault in the Vault directory
@@ -133,6 +140,23 @@ fn main() {
                 if let Ok(()) = manager.import_file(&vault_name, &vault_destination, &content) {
                 } else {
                     eprintln!("Failed to import file into vault '{}'.", vault_name);
+                }
+            } else {
+                eprintln!(
+                    "Failed to unlock vault '{}'. Please check the name and password.",
+                    vault_name
+                );
+            }
+        },
+        Commands::Export { vault_path, vault_name, host_path } => {
+            let password: String = rpassword::prompt_password("Enter vault password: ")
+                .expect("Failed to read password");
+            let vault_path: PathBuf = PathBuf::from(vault_path);
+            if manager.unlock_vault(&vault_name, &password).is_ok() {
+                if let Ok(content) = manager.export_file(&vault_name, &vault_path) {
+                    fs::write(&host_path, content).expect("Failed to write file to host path");
+                } else {
+                    eprintln!("Failed to export file from vault '{}'.", vault_name);
                 }
             } else {
                 eprintln!(

@@ -1,3 +1,4 @@
 /target
 /.vault
 .vscode/
+src/.vault/vault.manifest
