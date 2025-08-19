@@ -265,4 +265,21 @@ impl UnlockedVault {
         let decrypted_blob = decrypt(&raw_blob_data, &self.content_key)?;
         Ok(decrypted_blob)
     }
+
+    pub fn list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
+        let parent = path.parent().unwrap_or(Path::new("/"));
+        eprintln!("(vault) Listing files in path: {}", parent.display());
+
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self)?;
+
+        eprintln!("(vault) Current listing: {:?}", current_listing);
+
+        let files: Vec<String> = current_listing
+            .files
+            .keys()
+            .cloned()
+            .collect();
+
+        Ok(files)
+    }
 }
