@@ -38,7 +38,7 @@ pub fn connect(uri: &URIParser) -> Result<Box<dyn StorageBackend>, VaultError> {
         }
         StorageLocations::S3(ref bucket) => {
             // Here you would implement the S3 storage backend
-            Err(VaultError::NotImplementedError)
+            Err(VaultError::NotImplemented)
         }
     }
 }

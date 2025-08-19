@@ -7,11 +7,12 @@
 */
 
 use std::path::Path;
+use std::time::SystemTime;
 
 use crate::core::crypto::SecureKey;
 use crate::core::error::VaultError;
 use crate::core::storage::{self, StorageBackend, connect};
-use crate::core::vault::{self, UnlockedVault};
+use crate::core::vault::{self, DirectoryListing, UnlockedVault};
 use directories_next::ProjectDirs;
 use serde::{Deserialize, Serialize, ser};
 
@@ -53,17 +54,7 @@ impl VaultManager {
         let manifest_path = config_dir.join(MANIFEST_FILENAME);
         if !manifest_path.exists() {
             // Print welcome banner
-            let welcome_banner = r#"
-                
-____   ____            .__   __                           
-\   \ /   /____   __ __|  |_/  |_          _______  ______
- \   Y   /\__  \ |  |  \  |\   __\  ______ \_  __ \/  ___/
-  \     /  / __ \|  |  /  |_|  |   /_____/  |  | \/\___ \ 
-   \___/  (____  /____/|____/__|            |__|  /____  >
-               \/                                      \/ 
-"#;
-
-            println!("{}", welcome_banner);
+            Self::print_banner();
             println!("Welcome to Vault-rs! Your secure file vault.");
             println!(
                 "It looks like your first time here! Creating a new configuration to get you started."
@@ -108,7 +99,19 @@ ____   ____            .__   __
             Ok(vault_manager)
         }
     }
+    pub fn print_banner() {
+        let welcome_banner = r#"
+                
+____   ____            .__   __                           
+\   \ /   /____   __ __|  |_/  |_          _______  ______
+ \   Y   /\__  \ |  |  \  |\   __\  ______ \_  __ \/  ___/
+  \     /  / __ \|  |  /  |_|  |   /_____/  |  | \/\___ \ 
+   \___/  (____  /____/|____/__|            |__|  /____  >
+               \/                                      \/ 
+"#;
 
+        println!("{}", welcome_banner);
+    }
     /*
         Core functionality of the VaultManager will go here.
         This includes methods to add, remove, and list vaults,
@@ -145,26 +148,27 @@ ____   ____            .__   __
             Ok(())
         }
     }
-    pub fn unlock_vault(&mut self, name: &str, password: &str) -> Result<bool, VaultError> {
-        if let Some(vault_info) = self.vaults.get(name) {
-            let uri = URIParser::parse(&vault_info.location)?;
-            let storage = connect(&uri)?;
-            let unlocked_vault = UnlockedVault::open(storage, password)?;
-            self.unlocked_vaults
-                .insert(name.to_string(), unlocked_vault);
-            // Update the last opened time
-            if let Some(vault_info) = self.vaults.get_mut(name) {
-                vault_info.last_opened = std::time::SystemTime::now();
-            }
-            // Save the updated manifest
-            self.save_manifest(serde_json::to_string(&self).unwrap())?;
-            println!("Vault '{}' unlocked successfully.", name);
-            // Update the content and metadata keys
-            Ok(true)
-        } else {
-            eprintln!("Failed to unlock vault '{}': Vault not found", name);
-            Err(VaultError::VaultNotFound)
-        }
+    pub fn unlock_vault(&mut self, name: &str, password: &str) -> Result<SystemTime, VaultError> {
+        let vault_info = self.vaults.get_mut(name).ok_or(VaultError::VaultNotFound)?;
+
+        let uri = URIParser::parse(&vault_info.location)?;
+        let storage = connect(&uri)?;
+        let unlocked_vault = UnlockedVault::open(storage, password)?;
+
+        // Insert the unlocked vault
+        self.unlocked_vaults
+            .insert(name.to_string(), unlocked_vault);
+
+        // Update last opened
+        let last_opened = vault_info.last_opened;
+        vault_info.last_opened = SystemTime::now();
+
+        // Save manifest safely
+        let manifest =
+            serde_json::to_string(&self).map_err(|_| VaultError::Serialization)?;
+        self.save_manifest(manifest)?;
+
+        Ok(last_opened)
     }
 
     pub fn save_manifest(&self, data: String) -> Result<(), VaultError> {
@@ -201,11 +205,7 @@ ____   ____            .__   __
         Ok(())
     }
 
-    pub fn export_file(
-        &self,
-        vault_name: &str,
-        vault_path: &Path,
-    ) -> Result<Vec<u8>, VaultError> {
+    pub fn export_file(&self, vault_name: &str, vault_path: &Path) -> Result<Vec<u8>, VaultError> {
         let vault = self
             .unlocked_vaults
             .get(vault_name)
@@ -222,6 +222,14 @@ ____   ____            .__   __
             vault_path.display()
         );
         Ok(content)
+    }
+
+    pub fn list_files_from_vault(&self,vault_name: &str, path:&Path)->Result<Vec<String>,VaultError>{
+        let vault= self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        vault.list_files(path)
     }
 }
 
