@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & Discussions
+    url: https://github.com/realRudraP/vault-rs/discussions
+    about: Ask questions, share ideas, or discuss the project
+  - name: 🔒 Private Security Report
+    url: mailto:rudra.ponkshe@protonmail.com
+    about: Report critical security vulnerabilities privately
