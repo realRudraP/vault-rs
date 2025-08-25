@@ -266,7 +266,7 @@ impl UnlockedVault {
         Ok(decrypted_blob)
     }
 
-    pub fn list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
+    pub fn  list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
         let parent = path.parent().unwrap_or(Path::new("/"));
         eprintln!("(vault) Listing files in path: {}", parent.display());
 
