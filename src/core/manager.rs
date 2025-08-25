@@ -123,12 +123,12 @@ ____   ____            .__   __
     }
     pub fn add_vault(
         &mut self,
-        name: String,
-        location: String,
+        name: &str,
+        location: &str,
         options: std::collections::HashMap<String, String>,
         password: String,
     ) -> Result<(), VaultError> {
-        if self.vaults.contains_key(name.as_str()) {
+        if self.vaults.contains_key(name) {
             return Err(VaultError::VaultAlreadyExists);
         } else {
             let uri = URIParser::parse(&location)?;
@@ -143,7 +143,7 @@ ____   ____            .__   __
                 last_opened: std::time::SystemTime::now(),
                 options,
             };
-            self.vaults.insert(name, vault_info);
+            self.vaults.insert(name.to_string(), vault_info);
             self.save_manifest(serde_json::to_string(&self).unwrap())?;
             Ok(())
         }
@@ -161,6 +161,7 @@ ____   ____            .__   __
 
         // Update last opened
         let last_opened = vault_info.last_opened;
+        println!("Vault was last opened at: {:?}", last_opened);
         vault_info.last_opened = SystemTime::now();
 
         // Save manifest safely
@@ -187,15 +188,19 @@ ____   ____            .__   __
         vault_path: &Path,
         content: &[u8],
     ) -> Result<(), VaultError> {
+        if !self.vaults.contains_key(vault_name) {
+            return Err(VaultError::VaultNotFound);
+        }
         let vault = self
             .unlocked_vaults
             .get(vault_name)
-            .ok_or(VaultError::VaultNotFound)?;
+            .ok_or(VaultError::VaultNotUnlocked)?;
         eprintln!(
             "(manager)Importing file into vault '{}': {}",
             vault_name,
             vault_path.display()
         );
+        
         vault.import_file(content, vault_path)?;
         println!(
             "Successfully imported into {}:{}",

@@ -1,9 +1,9 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 
 use super::error::VaultError;
 use super::manager::{StorageLocations, URIParser};
-use std::io;
+use std::io::{self, Write};
 
 /*
     The StorageBackend trait defines the interface for storage backends
@@ -82,7 +82,12 @@ impl LocalStorageBackend {
 impl StorageBackend for LocalStorageBackend {
     fn store_blob(&self, id: &str, data: &[u8]) -> Result<(), VaultError> {
         let file_path = self.root_path.join(id);
-        fs::write(file_path, data).map_err(|e| VaultError::Io(e))
+        let mut file=OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(file_path)?;
+        file.write_all(data).map_err(|e| VaultError::Io(e))?;
+        Ok(())
     }
 
     fn get_blob(&self, id: &str) -> Result<Vec<u8>, VaultError> {

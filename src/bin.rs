@@ -95,7 +95,7 @@ fn main() {
             }
             println!("Adding vault '{}' at path '{}'", name, path);
             manager
-                .add_vault(name, path, HashMap::new(), password)
+                .add_vault(&name, &path, HashMap::new(), password)
                 .expect("Failed to add vault");
         }
         Commands::List => {
@@ -180,7 +180,7 @@ fn main() {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "interactive-vault")]
+#[command(name = "vault")]
 #[command(no_binary_name = true)]
 struct ShellCli {
     #[command(subcommand)]
@@ -189,9 +189,20 @@ struct ShellCli {
 
 #[derive(Subcommand, Debug)]
 enum ShellCommands {
+    Unlock {
+        #[arg(short, long)]
+        vault_name: String,
+    },
+    List,
+    New {
+        #[arg(short, long)]
+        vault_name: String,
+        #[arg(short, long)]
+        path: Option<String>,
+    },
     Ls {
         #[arg(default_value = ".")]
-        path: String,
+        path: PathBuf,
     },
     Cd {
         #[arg(default_value = ".")]
@@ -232,19 +243,13 @@ enum ShellCommands {
     },
     Clear,
     Import {
-        host_path: String,
-        #[arg(short, long)]
+        host_path: PathBuf,
+        #[arg(short = 'v', long)]
         vault_name: String,
-        #[arg(short, long)]
-        vault_path: Option<String>,
+        #[arg(short = 'p', long)]
+        vault_path: Option<PathBuf>,
     },
-    Help {
-        command: Option<String>,
-    },
-    Exit {
-        #[arg(default_value = "0")]
-        code: i32,
-    },
+    Exit,
 }
 
 struct VaultShell {
@@ -277,58 +282,34 @@ impl VaultShell {
             };
 
             let line = rl.readline(&prompt)?;
-            let args: Vec<&str> = line.trim().split_whitespace().collect();
-            if args.is_empty() {
+            let trimmed = line.trim();
+
+            // Skip empty lines
+            if trimmed.is_empty() {
                 continue;
             }
 
-            let command = args[0].to_lowercase();
-            match command.as_str() {
-                "unlock" => match self.cmd_unlock(args[1]) {
-                    Ok(()) => {
-                        println!("(orchestrator) Vault '{}' unlocked successfully.", args[1]);
-                    }
+            match ShellCli::try_parse_from(trimmed.split_whitespace()) {
+                Ok(cli) => match self.execute_command(cli.command) {
+                    Ok(_) => {}
                     Err(e) => {
-                        eprintln!("ERROR: {}", e);
-                    }
-                },
-                "list" => match self.cmd_list() {
-                    Ok(()) => {
-                        println!("(orchestrator) Vaults listed successfully.");
-                    }
-                    Err(e) => {
-                        eprintln!("ERROR: {}", e);
-                    }
-                },
-                "ls" => {
-                    if !self.active_vault_name.is_some() {
-                        eprintln!(
-                            "ERROR: No vault is currently active. Please unlock a vault first."
-                        );
-                        continue;
-                    }
-                    let path = if let Some(arg)=args.get(1){
-                        self.resolve_path(arg)
-                    }else{
-                        self.resolve_path(".")
-                    };
-                    match self.cmd_ls(&path) {
-                        Ok(()) => {
-                            println!("(orchestrator) Files listed successfully.");
-                        }
-                        Err(e) => {
-                            eprintln!("ERROR: {}", e);
+                        println!("ERROR: {}", e);
+                        match e {
+                            VaultError::NoActiveVault => {
+                                continue;
+                            }
+                            _ => {
+                                break;
+                            }
                         }
                     }
-                }
-                "exit" => {
-                    println!("Exiting vault shell.");
-                    self.is_running = false;
-                }
-                &_ => {
-                    eprintln!("ERROR: Unknown command '{}'", command);
+                },
+                Err(e) => {
+                    eprintln!("ERROR: {}", e);
+                    continue;
                 }
             }
+            rl.add_history_entry(trimmed)?;
         }
         Ok(())
     }
@@ -336,7 +317,7 @@ impl VaultShell {
     fn resolve_path(&self, path: &str) -> PathBuf {
         if path.starts_with("/") {
             PathBuf::from(path)
-        } else if path == "." || path==""{
+        } else if path == "." || path == "" {
             self.current_dir.clone()
         } else if path == ".." {
             self.current_dir
@@ -349,7 +330,7 @@ impl VaultShell {
     }
 
     fn cmd_unlock(&mut self, vault_name: &str) -> Result<(), VaultError> {
-        match rpassword::prompt_password("Enter the password for the vault: ") {
+        match rpassword::prompt_password("Enter the passwoWrd for the vault: ") {
             Ok(password) => {
                 self.manager.unlock_vault(vault_name, &password)?;
                 self.active_vault_name = Some(vault_name.to_string());
@@ -364,6 +345,9 @@ impl VaultShell {
     }
 
     fn cmd_list(&self) -> Result<(), VaultError> {
+        if self.active_vault_name.is_none() {
+            return Err(VaultError::NoActiveVault);
+        }
         let vaults = self.manager.list_vaults()?;
 
         if vaults.is_empty() {
@@ -383,11 +367,10 @@ impl VaultShell {
         let active_vault = match &self.active_vault_name {
             Some(name) => name,
             None => {
-                eprintln!("ERROR: No vault is currently active. Please unlock a vault first.");
                 return Err(VaultError::NoActiveVault);
             }
         };
-        
+
         let files: Vec<String> = self.manager.list_files_from_vault(active_vault, path)?;
 
         if files.is_empty() {
@@ -402,7 +385,95 @@ impl VaultShell {
         Ok(())
     }
 
+    fn cmd_import(
+        &mut self,
+        host_path: &Path,
+        vault_name: &str,
+        vault_path: &Option<PathBuf>,
+    ) -> Result<(), VaultError> {
+        match self.active_vault_name {
+            Some(ref _name) => {
+                let content = std::fs::read(host_path).map_err(|_| {
+                    VaultError::UnableToAccessLocation(host_path.to_string_lossy().to_string())
+                })?;
+
+                let final_vault_path = vault_path
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| PathBuf::from("/").join(host_path.file_name().unwrap()));
+
+                self.manager
+                    .import_file(vault_name, &final_vault_path, &content)?;
+                Ok(())
+            }
+            None => Err(VaultError::NoActiveVault),
+        }
+    }
+
+    fn cmd_new(&mut self, name: &str, path: &Option<String>) -> Result<(), VaultError> {
+        let current_dir = std::env::current_dir()
+            .expect("Failed to get current directory")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let path = match path {
+            Some(p) => {
+                if !p.starts_with("local://") {
+                    p
+                } else {
+                    eprintln!("Invalid path format. Use local://<path> for local files.");
+                    return Err(VaultError::InvalidPath);
+                }
+            }
+            None => &format!("local://{}", current_dir),
+        };
+        // Add a new vault with the provided name and path
+        let password: String =
+            rpassword::prompt_password("Enter vault password: ").expect("Failed to read password");
+        let repeat_password: String =
+            rpassword::prompt_password("Repeat vault password: ").expect("Failed to read password");
+        if password != repeat_password {
+            eprintln!("Passwords do not match. Please try again.");
+            return Err(VaultError::Generic("Passwords do not match".to_string()));
+        }
+        println!("Adding vault '{}' at path '{}'", name, path);
+        self.manager
+            .add_vault(name, path, HashMap::new(), password)
+            .expect("Failed to add vault");
+        Ok(())
+    }
+
     fn execute_command(&mut self, command: ShellCommands) -> Result<(), VaultError> {
+        match command {
+            ShellCommands::Unlock { vault_name } => {
+                self.cmd_unlock(&vault_name)?;
+            }
+            ShellCommands::List => {
+                self.cmd_list()?;
+            }
+            ShellCommands::Ls { path } => {
+                self.cmd_ls(&path)?;
+            }
+            ShellCommands::New { vault_name, path } => {
+                self.cmd_new(&vault_name, &path)?;
+            }
+            ShellCommands::Import {
+                host_path,
+                vault_name,
+                vault_path,
+            } => {
+                self.cmd_import(&host_path, &vault_name, &vault_path)?;
+            }
+            ShellCommands::Exit => {
+                std::process::exit(0);
+            }
+            ShellCommands::Pwd => {
+                println!("{}", self.current_dir.display());
+            }
+            _ => {
+                eprintln!("Command not implemented yet: {:?}", command);
+            }
+        }
         Ok(())
     }
 }

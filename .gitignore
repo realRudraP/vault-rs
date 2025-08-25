@@ -2,3 +2,4 @@
 /.vault
 .vscode/
 src/.vault/vault.manifest
+.gitignore

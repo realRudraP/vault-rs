@@ -47,6 +47,9 @@ pub enum VaultError {
     #[error("shell command failed")]
     ShellError,
 
+    #[error("vault not unlocked")]
+    VaultNotUnlocked,
+
     #[error("{0}")]
     Generic(String),
 
