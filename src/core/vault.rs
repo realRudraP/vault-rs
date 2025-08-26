@@ -136,7 +136,9 @@ impl UnlockedVault {
     }
 
     pub fn open(storage: Box<dyn StorageBackend>, password: &str) -> Result<Self, VaultError> {
-        let manifest_blob = storage.get_blob("vault.manifest")?;
+        let manifest_blob = storage.get_blob("vault.manifest").map_err(|_| {
+            VaultError::VaultNotFound
+        })?;
         let manifest_json =
             String::from_utf8(manifest_blob).map_err(|_| VaultError::Serialization)?;
         let manifest: VaultManifest =

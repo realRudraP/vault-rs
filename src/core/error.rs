@@ -26,6 +26,9 @@ pub enum VaultError {
     #[error("requested resource not found")]
     ResourceNotFound,
 
+    #[error("vault manifest not found on disk")]
+    VaultManifestNotFound,
+
     #[error("no active vault is currently unlocked")]
     NoActiveVault,
 

@@ -336,6 +336,36 @@ impl VaultShell {
     }
 
     fn cmd_unlock(&mut self, vault_name: &str) -> Result<(), VaultError> {
+        if let Err(e) = self.manager.vault_unlock_preflight(vault_name) {
+        match e {
+            VaultError::VaultManifestNotFound => {
+                eprintln!("Error: Vault '{}' is registered, but its files could not be found.", vault_name);
+                eprintln!("This can happen if the vault was moved, deleted, or is on a disconnected drive.");
+                
+                println!("\nWould you like to remove this vault's registration? [y/N]");
+                
+                let mut input = String::new();
+                if std::io::stdin().read_line(&mut input).is_ok() {
+                    if input.trim().eq_ignore_ascii_case("y") {
+                        println!("Removing vault registration...");
+                        match self.manager.remove_vault_registration(vault_name) {
+                            Ok(_) => println!("Successfully removed registration for '{}'.", vault_name),
+                            Err(e) => eprintln!("Failed to remove registration: {:?}", e),
+                        }
+                    } else {
+                        println!("No action taken. The registration was not removed.");
+                    }
+                }
+            }
+            VaultError::VaultNotFound => {
+                eprintln!("Error: Vault '{}' is not registered.", vault_name);
+            }
+            _ => {
+                eprintln!("An unexpected error occurred: {:?}", e);
+            }
+        }
+        return Ok(());
+    }
         match rpassword::prompt_password("Enter the password for the vault: ") {
             Ok(password) => {
                 self.manager.unlock_vault(vault_name, &password)?;
