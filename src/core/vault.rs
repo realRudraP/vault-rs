@@ -205,7 +205,7 @@ impl UnlockedVault {
         );
         let mut current_listing = self
             .directory_cache
-            .get_directory_listing(path.parent().unwrap(), &self)?;
+            .get_directory_listing(path.parent().unwrap(), &self,true)?;
         eprintln!("(vault) Current Directory Listing: {:#?}", current_listing);
         let metadata = EntryMetadata {
             entry_type: EntryType::File,
@@ -241,7 +241,8 @@ impl UnlockedVault {
 
         eprintln!("(vault) Exporting file from path: {}", parent.display());
 
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self)?;
+        // TODO: When implementing the delete from Vault while exporting functionality, we need to ensure the cache is updated accordingly.
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self,false)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 
@@ -270,7 +271,7 @@ impl UnlockedVault {
         let parent = path.parent().unwrap_or(Path::new("/"));
         eprintln!("(vault) Listing files in path: {}", parent.display());
 
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self)?;
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self,false)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 

@@ -3,3 +3,4 @@
 .vscode/
 src/.vault/vault.manifest
 .gitignore
+TODO.md

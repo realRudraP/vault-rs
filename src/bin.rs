@@ -7,7 +7,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use vault_core::core::{error::VaultError, manager::VaultManager};
-use zeroize::Zeroize;
 
 #[derive(Parser, Debug)]
 #[command(name = "vault")]
@@ -245,9 +244,16 @@ enum ShellCommands {
     Import {
         host_path: PathBuf,
         #[arg(short = 'v', long)]
-        vault_name: String,
+        vault_name: Option<String>,
         #[arg(short = 'p', long)]
         vault_path: Option<PathBuf>,
+    },
+    Export {
+        host_path: Option<PathBuf>,
+        #[arg(short = 'v', long)]
+        vault_name: Option<String>,
+        #[arg(short = 'p', long)]
+        vault_path: PathBuf,
     },
     Exit,
 }
@@ -330,7 +336,7 @@ impl VaultShell {
     }
 
     fn cmd_unlock(&mut self, vault_name: &str) -> Result<(), VaultError> {
-        match rpassword::prompt_password("Enter the passwoWrd for the vault: ") {
+        match rpassword::prompt_password("Enter the password for the vault: ") {
             Ok(password) => {
                 self.manager.unlock_vault(vault_name, &password)?;
                 self.active_vault_name = Some(vault_name.to_string());
@@ -410,6 +416,28 @@ impl VaultShell {
         }
     }
 
+    fn cmd_export(
+        &mut self,
+        vault_path: &Path,
+        vault_name: &str,
+        host_path: Option<PathBuf>
+    )->Result<(),VaultError>{
+        match self.manager.export_file(vault_name, &vault_path){
+            Ok(content)=>{
+                let final_host_path= host_path.unwrap_or_else(||{
+                    let filename= vault_path.file_name().unwrap_or(std::ffi::OsStr::new("exported_file"));
+                    std::env::current_dir().unwrap().join(filename)
+                });
+                std::fs::write(&final_host_path,content).map_err(|e|VaultError::Io(e))?;
+                println!("File exported to {}",final_host_path.display());
+                Ok(())
+            }
+            Err(e)=>{
+                Err(e)
+            }
+        }
+    }
+
     fn cmd_new(&mut self, name: &str, path: &Option<String>) -> Result<(), VaultError> {
         let current_dir = std::env::current_dir()
             .expect("Failed to get current directory")
@@ -462,8 +490,32 @@ impl VaultShell {
                 vault_name,
                 vault_path,
             } => {
-                self.cmd_import(&host_path, &vault_name, &vault_path)?;
-            }
+                let name = if let Some(name) = vault_name {
+                    name
+                } else if let Some(name) = &self.active_vault_name {
+                    name.clone()
+                } else {
+                    return Err(VaultError::NoActiveVault);
+                };
+
+                self.cmd_import(&host_path, &name, &vault_path)?;
+            },
+            ShellCommands::Export {
+                host_path,
+                vault_name,
+                vault_path,
+            } => {
+                let name = if let Some(name) = vault_name {
+                    name
+                } else if let Some(name) = &self.active_vault_name {
+                    name.clone()
+                } else {
+                    return Err(VaultError::NoActiveVault);
+                };
+
+                self.cmd_export(&vault_path, &name, host_path)?;
+            },
+          
             ShellCommands::Exit => {
                 std::process::exit(0);
             }

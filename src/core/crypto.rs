@@ -12,7 +12,6 @@ use once_cell::sync::Lazy;
 use thiserror::Error;
 use zeroize::Zeroize;
 
-use std::fmt;
 
 // =============================================================================
 // CONSTANTS
