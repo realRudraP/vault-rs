@@ -150,7 +150,7 @@ impl UnlockedVault {
             .map_err(|_| VaultError::Serialization)?;
         let kek = crypto::derive_key_from_password_and_salt(password, &kdf_salt)?;
         let main_dek_raw = crypto::decrypt(&encrypted_master_key, &kek)
-            .map_err(|_| VaultError::Crypto("Failed to decrypt master key".to_string()))?;
+            .map_err(|_| VaultError::Crypto("Wrong credentials. Please recheck".to_string()))?;
         let main_dek = SecureKey::new(main_dek_raw);
         let (content_key, metadata_key) = main_dek.split_into_keys(32);
         let root_blob_encrypted_id = manifest.root_blob_encrypted_id.clone();

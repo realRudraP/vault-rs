@@ -17,6 +17,9 @@ pub enum VaultError {
     #[error("vault cache is inconsistent with stored state")]
     CacheInconsistent,
 
+    #[error("continuing execution despite errors")]
+    ContinuingExecution,
+
     #[error("a vault with this name already exists")]
     VaultAlreadyExists,
 

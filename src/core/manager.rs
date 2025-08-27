@@ -163,7 +163,7 @@ impl VaultManager {
         let uri = URIParser::parse(&vault_info.location)?;
         match uri.location {
             StorageLocations::Local(path) => {
-                let manifest_path = PathBuf::from(&path).join("vault.manifest");
+                let manifest_path = PathBuf::from(&path).join(".vault").join("vault.manifest");
 
                 if !manifest_path.exists() {
                     return Err(VaultError::VaultManifestNotFound);

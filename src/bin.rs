@@ -189,12 +189,12 @@ struct ShellCli {
 #[derive(Subcommand, Debug)]
 enum ShellCommands {
     Unlock {
-        #[arg(short, long)]
+        #[arg(index=1,short, long)]
         vault_name: String,
     },
     List,
     New {
-        #[arg(short, long)]
+        #[arg(index=1,short, long)]
         vault_name: String,
         #[arg(short, long)]
         path: Option<String>,
@@ -261,7 +261,6 @@ enum ShellCommands {
 struct VaultShell {
     manager: VaultManager,
     current_dir: PathBuf,
-    history: Vec<String>,
     active_vault_name: Option<String>,
     is_running: bool,
 }
@@ -271,7 +270,6 @@ impl VaultShell {
         VaultShell {
             manager,
             current_dir: PathBuf::from("/"),
-            history: Vec::new(),
             active_vault_name: None,
             is_running: true,
         }
@@ -294,17 +292,21 @@ impl VaultShell {
             if trimmed.is_empty() {
                 continue;
             }
-
+            rl.add_history_entry(trimmed)?;
             match ShellCli::try_parse_from(trimmed.split_whitespace()) {
                 Ok(cli) => match self.execute_command(cli.command) {
                     Ok(_) => {}
                     Err(e) => {
-                        println!("ERROR: {}", e);
                         match e {
                             VaultError::NoActiveVault => {
+                                println!("ERROR: {}", e);
+                                continue;
+                            },
+                            VaultError::ContinuingExecution => {
                                 continue;
                             }
                             _ => {
+                                println!("ERROR: {}", e);
                                 break;
                             }
                         }
@@ -315,7 +317,7 @@ impl VaultShell {
                     continue;
                 }
             }
-            rl.add_history_entry(trimmed)?;
+            
         }
         Ok(())
     }
@@ -368,10 +370,17 @@ impl VaultShell {
     }
         match rpassword::prompt_password("Enter the password for the vault: ") {
             Ok(password) => {
-                self.manager.unlock_vault(vault_name, &password)?;
-                self.active_vault_name = Some(vault_name.to_string());
-                self.current_dir = PathBuf::from("/");
-                println!("Vault '{}' unlocked successfully.", vault_name);
+                match self.manager.unlock_vault(vault_name, &password) {
+                    Ok(_) => {
+                        self.active_vault_name = Some(vault_name.to_string());
+                        self.current_dir = PathBuf::from("/");
+                        println!("Vault '{}' unlocked successfully.", vault_name);
+                    }
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        return Err(VaultError::ContinuingExecution);
+                    }
+                }
             }
             Err(_) => {
                 eprintln!("Failed to read password.");
@@ -381,9 +390,6 @@ impl VaultShell {
     }
 
     fn cmd_list(&self) -> Result<(), VaultError> {
-        if self.active_vault_name.is_none() {
-            return Err(VaultError::NoActiveVault);
-        }
         let vaults = self.manager.list_vaults()?;
 
         if vaults.is_empty() {
