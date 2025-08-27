@@ -136,7 +136,9 @@ impl UnlockedVault {
     }
 
     pub fn open(storage: Box<dyn StorageBackend>, password: &str) -> Result<Self, VaultError> {
-        let manifest_blob = storage.get_blob("vault.manifest")?;
+        let manifest_blob = storage.get_blob("vault.manifest").map_err(|_| {
+            VaultError::VaultNotFound
+        })?;
         let manifest_json =
             String::from_utf8(manifest_blob).map_err(|_| VaultError::Serialization)?;
         let manifest: VaultManifest =
@@ -148,7 +150,7 @@ impl UnlockedVault {
             .map_err(|_| VaultError::Serialization)?;
         let kek = crypto::derive_key_from_password_and_salt(password, &kdf_salt)?;
         let main_dek_raw = crypto::decrypt(&encrypted_master_key, &kek)
-            .map_err(|_| VaultError::Crypto("Failed to decrypt master key".to_string()))?;
+            .map_err(|_| VaultError::Crypto("Wrong credentials. Please recheck".to_string()))?;
         let main_dek = SecureKey::new(main_dek_raw);
         let (content_key, metadata_key) = main_dek.split_into_keys(32);
         let root_blob_encrypted_id = manifest.root_blob_encrypted_id.clone();
@@ -205,7 +207,7 @@ impl UnlockedVault {
         );
         let mut current_listing = self
             .directory_cache
-            .get_directory_listing(path.parent().unwrap(), &self)?;
+            .get_directory_listing(path.parent().unwrap(), &self,true)?;
         eprintln!("(vault) Current Directory Listing: {:#?}", current_listing);
         let metadata = EntryMetadata {
             entry_type: EntryType::File,
@@ -241,7 +243,8 @@ impl UnlockedVault {
 
         eprintln!("(vault) Exporting file from path: {}", parent.display());
 
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self)?;
+        // TODO: When implementing the delete from Vault while exporting functionality, we need to ensure the cache is updated accordingly.
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self,false)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 
@@ -266,11 +269,11 @@ impl UnlockedVault {
         Ok(decrypted_blob)
     }
 
-    pub fn list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
+    pub fn  list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
         let parent = path.parent().unwrap_or(Path::new("/"));
         eprintln!("(vault) Listing files in path: {}", parent.display());
 
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self)?;
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self,false)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 

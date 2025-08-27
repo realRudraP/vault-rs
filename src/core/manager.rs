@@ -6,7 +6,7 @@
    URI, last opened time, and options.
 */
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::core::crypto::SecureKey;
@@ -102,12 +102,18 @@ impl VaultManager {
     pub fn print_banner() {
         let welcome_banner = r#"
                 
-____   ____            .__   __                           
-\   \ /   /____   __ __|  |_/  |_          _______  ______
- \   Y   /\__  \ |  |  \  |\   __\  ______ \_  __ \/  ___/
-  \     /  / __ \|  |  /  |_|  |   /_____/  |  | \/\___ \ 
-   \___/  (____  /____/|____/__|            |__|  /____  >
-               \/                                      \/ 
+██╗   ██╗ █████╗ ██╗   ██╗██╗  ████████╗
+██║   ██║██╔══██╗██║   ██║██║  ╚══██╔══╝
+██║   ██║███████║██║   ██║██║     ██║   
+╚██╗ ██╔╝██╔══██║██║   ██║██║     ██║   
+ ╚████╔╝ ██║  ██║╚██████╔╝███████╗██║   
+  ╚═══╝  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝   
+         __      __                ____   ___
+  ____ _/ /___  / /_  ____ _      / __ \ <  /
+ / __ `/ / __ \/ __ \/ __ `/_____/ / / / / / 
+/ /_/ / / /_/ / / / / /_/ /_____/ /_/ / / /  
+\__,_/_/ .___/_/ /_/\__,_/      \____(_)_/   
+      /_/                                                
 "#;
 
         println!("{}", welcome_banner);
@@ -123,12 +129,12 @@ ____   ____            .__   __
     }
     pub fn add_vault(
         &mut self,
-        name: String,
-        location: String,
+        name: &str,
+        location: &str,
         options: std::collections::HashMap<String, String>,
         password: String,
     ) -> Result<(), VaultError> {
-        if self.vaults.contains_key(name.as_str()) {
+        if self.vaults.contains_key(name) {
             return Err(VaultError::VaultAlreadyExists);
         } else {
             let uri = URIParser::parse(&location)?;
@@ -143,11 +149,43 @@ ____   ____            .__   __
                 last_opened: std::time::SystemTime::now(),
                 options,
             };
-            self.vaults.insert(name, vault_info);
-            self.save_manifest(serde_json::to_string(&self).unwrap())?;
+            self.vaults.insert(name.to_string(), vault_info);
+            self.save_manifest()?;
             Ok(())
         }
     }
+
+    pub fn vault_unlock_preflight(&self, vault_name: &str) -> Result<(), VaultError> {
+        let vault_info = self
+            .vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        let uri = URIParser::parse(&vault_info.location)?;
+        match uri.location {
+            StorageLocations::Local(path) => {
+                let manifest_path = PathBuf::from(&path).join(".vault").join("vault.manifest");
+
+                if !manifest_path.exists() {
+                    return Err(VaultError::VaultManifestNotFound);
+                }
+            }
+            StorageLocations::S3(_) => {
+                return Err(VaultError::NotImplemented);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_vault_registration(&mut self, vault_name: &str) -> Result<(), VaultError> {
+        if self.vaults.remove(vault_name).is_none() {
+            return Err(VaultError::VaultNotFound);
+        } else {
+            self.unlocked_vaults.remove(vault_name);
+            self.save_manifest()?;
+            Ok(())
+        }
+    }
+
     pub fn unlock_vault(&mut self, name: &str, password: &str) -> Result<SystemTime, VaultError> {
         let vault_info = self.vaults.get_mut(name).ok_or(VaultError::VaultNotFound)?;
 
@@ -161,21 +199,20 @@ ____   ____            .__   __
 
         // Update last opened
         let last_opened = vault_info.last_opened;
+        println!("Vault was last opened at: {:?}", last_opened);
         vault_info.last_opened = SystemTime::now();
 
-        // Save manifest safely
-        let manifest =
-            serde_json::to_string(&self).map_err(|_| VaultError::Serialization)?;
-        self.save_manifest(manifest)?;
+        self.save_manifest()?;
 
         Ok(last_opened)
     }
 
-    pub fn save_manifest(&self, data: String) -> Result<(), VaultError> {
+    pub fn save_manifest(&self) -> Result<(), VaultError> {
         let project_dir = ProjectDirs::from("com.github", "realRudraP", "vault-rs")
             .expect("Failed to get project directory");
         let config_dir = project_dir.config_dir();
         let manifest_path = config_dir.join(MANIFEST_FILENAME);
+        let data = serde_json::to_string(&self).map_err(|_| VaultError::Serialization)?;
         // Write the manifest data to the manifest file
         std::fs::write(manifest_path, data).map_err(|e| VaultError::Io(e))?;
         Ok(())
@@ -187,15 +224,19 @@ ____   ____            .__   __
         vault_path: &Path,
         content: &[u8],
     ) -> Result<(), VaultError> {
+        if !self.vaults.contains_key(vault_name) {
+            return Err(VaultError::VaultNotFound);
+        }
         let vault = self
             .unlocked_vaults
             .get(vault_name)
-            .ok_or(VaultError::VaultNotFound)?;
+            .ok_or(VaultError::VaultNotUnlocked)?;
         eprintln!(
             "(manager)Importing file into vault '{}': {}",
             vault_name,
             vault_path.display()
         );
+
         vault.import_file(content, vault_path)?;
         println!(
             "Successfully imported into {}:{}",
@@ -224,8 +265,12 @@ ____   ____            .__   __
         Ok(content)
     }
 
-    pub fn list_files_from_vault(&self,vault_name: &str, path:&Path)->Result<Vec<String>,VaultError>{
-        let vault= self
+    pub fn list_files_from_vault(
+        &self,
+        vault_name: &str,
+        path: &Path,
+    ) -> Result<Vec<String>, VaultError> {
+        let vault = self
             .unlocked_vaults
             .get(vault_name)
             .ok_or(VaultError::VaultNotFound)?;

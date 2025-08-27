@@ -17,6 +17,9 @@ pub enum VaultError {
     #[error("vault cache is inconsistent with stored state")]
     CacheInconsistent,
 
+    #[error("continuing execution despite errors")]
+    ContinuingExecution,
+
     #[error("a vault with this name already exists")]
     VaultAlreadyExists,
 
@@ -25,6 +28,9 @@ pub enum VaultError {
 
     #[error("requested resource not found")]
     ResourceNotFound,
+
+    #[error("vault manifest not found on disk")]
+    VaultManifestNotFound,
 
     #[error("no active vault is currently unlocked")]
     NoActiveVault,
@@ -46,6 +52,9 @@ pub enum VaultError {
 
     #[error("shell command failed")]
     ShellError,
+
+    #[error("vault not unlocked")]
+    VaultNotUnlocked,
 
     #[error("{0}")]
     Generic(String),
