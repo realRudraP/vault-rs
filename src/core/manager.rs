@@ -218,13 +218,13 @@ impl VaultManager {
         Ok(())
     }
 
-    pub fn delete_vault(&mut self, vault_name: &str)->Result<(),VaultError>{
-        if let Some(vault)=self.vaults.get(vault_name){
-            let uri= URIParser::parse(&vault.location)?;
-            let storage_backend=connect(&uri)?;
+    pub fn delete_vault(&mut self, vault_name: &str) -> Result<(), VaultError> {
+        if let Some(vault) = self.vaults.get(vault_name) {
+            let uri = URIParser::parse(&vault.location)?;
+            let storage_backend = connect(&uri)?;
             storage_backend.destroy()?;
             Ok(())
-        }else{
+        } else {
             return Err(VaultError::VaultNotFound);
         }
     }
@@ -274,6 +274,20 @@ impl VaultManager {
             vault_path.display()
         );
         Ok(content)
+    }
+
+    pub fn create_folder_in_vault(
+        &self,
+        vault_name: &str,
+        folder_path: &Path,
+        recursive: bool,
+    )->Result<(),VaultError>{
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        vault.create_folder(folder_path, recursive)?;
+        Ok(())
     }
 
     pub fn list_files_from_vault(

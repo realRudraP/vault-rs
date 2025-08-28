@@ -23,7 +23,7 @@ pub trait StorageBackend: std::fmt::Debug {
 
     fn blob_exists(&self, id: &str) -> Result<bool, VaultError>;
 
-    fn destroy(self:Box<Self>)->Result<(),VaultError>;
+    fn destroy(self: Box<Self>) -> Result<(), VaultError>;
 }
 
 /*
@@ -84,10 +84,10 @@ impl LocalStorageBackend {
 impl StorageBackend for LocalStorageBackend {
     fn store_blob(&self, id: &str, data: &[u8]) -> Result<(), VaultError> {
         let file_path = self.root_path.join(id);
-        let mut file=OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(file_path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(file_path)?;
         file.write_all(data).map_err(|e| VaultError::Io(e))?;
         Ok(())
     }
@@ -107,7 +107,7 @@ impl StorageBackend for LocalStorageBackend {
         Ok(file_path.exists())
     }
 
-    fn destroy(self:Box<Self>)->Result<(),VaultError> {
+    fn destroy(self: Box<Self>) -> Result<(), VaultError> {
         std::fs::remove_dir_all(PathBuf::from(&self.root_path)).map_err(VaultError::Io)?;
         Ok(())
     }

@@ -189,7 +189,7 @@ struct ShellCli {
 #[derive(Subcommand, Debug)]
 enum ShellCommands {
     Unlock {
-        #[arg(index = 1, short, long)]
+        #[arg(index = 1)]
         vault_name: String,
     },
     List,
@@ -214,8 +214,8 @@ enum ShellCommands {
     Pwd,
     Mkdir {
         path: String,
-        #[arg(short, long)]
-        parents: bool,
+        #[arg(short)]
+        recursive: bool,
     },
     Rmdir {
         path: String,
@@ -336,6 +336,12 @@ impl VaultShell {
         } else {
             self.current_dir.join(path)
         }
+    }
+
+    fn cmd_mkdir(&self, folder_name:&str,current_path:&Path,recursive:bool)->Result<(),VaultError>{
+        let vault = self.active_vault_name.as_ref().ok_or(VaultError::NoActiveVault)?;
+        self.manager.create_folder_in_vault(&vault, &current_path.join(folder_name), recursive)?;
+        Ok(())
     }
 
     fn cmd_unlock(&mut self, vault_name: &str) -> Result<(), VaultError> {
@@ -465,15 +471,26 @@ impl VaultShell {
         vault_name: &str,
         host_path: Option<PathBuf>,
     ) -> Result<(), VaultError> {
-        match self.manager.export_file(vault_name, &vault_path) {
+        match self.manager.export_file(vault_name, vault_path) {
             Ok(content) => {
-                let final_host_path = host_path.unwrap_or_else(|| {
-                    let filename = vault_path
-                        .file_name()
-                        .unwrap_or(std::ffi::OsStr::new("exported_file"));
-                    std::env::current_dir().unwrap().join(filename)
-                });
-                std::fs::write(&final_host_path, content).map_err(|e| VaultError::Io(e))?;
+                // Figure out a default filename
+                let filename = vault_path
+                    .file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("exported_file"));
+
+                // Resolve the host path
+                let final_host_path = match host_path {
+                    Some(path) => {
+                        if path.is_dir() {
+                            path.join(filename)
+                        } else {
+                            path
+                        }
+                    }
+                    None => std::env::current_dir().unwrap().join(filename),
+                };
+
+                std::fs::write(&final_host_path, content).map_err(VaultError::Io)?;
                 println!("File exported to {}", final_host_path.display());
                 Ok(())
             }
@@ -589,6 +606,9 @@ impl VaultShell {
             }
             ShellCommands::Destroy { vault_name } => {
                 self.cmd_destroy(&vault_name)?;
+            }
+            ShellCommands::Mkdir { path, recursive } => {
+                self.cmd_mkdir(&path, &self.current_dir, recursive)?;
             }
             _ => {
                 eprintln!("Command not implemented yet: {:?}", command);

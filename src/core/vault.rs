@@ -136,9 +136,9 @@ impl UnlockedVault {
     }
 
     pub fn open(storage: Box<dyn StorageBackend>, password: &str) -> Result<Self, VaultError> {
-        let manifest_blob = storage.get_blob("vault.manifest").map_err(|_| {
-            VaultError::VaultNotFound
-        })?;
+        let manifest_blob = storage
+            .get_blob("vault.manifest")
+            .map_err(|_| VaultError::VaultNotFound)?;
         let manifest_json =
             String::from_utf8(manifest_blob).map_err(|_| VaultError::Serialization)?;
         let manifest: VaultManifest =
@@ -205,9 +205,9 @@ impl UnlockedVault {
             path.display(),
             blob_id
         );
-        let mut current_listing = self
-            .directory_cache
-            .get_directory_listing(path.parent().unwrap(), &self,true)?;
+        let mut current_listing =
+            self.directory_cache
+                .get_directory_listing(path.parent().unwrap(), &self, true)?;
         eprintln!("(vault) Current Directory Listing: {:#?}", current_listing);
         let metadata = EntryMetadata {
             entry_type: EntryType::File,
@@ -244,7 +244,9 @@ impl UnlockedVault {
         eprintln!("(vault) Exporting file from path: {}", parent.display());
 
         // TODO: When implementing the delete from Vault while exporting functionality, we need to ensure the cache is updated accordingly.
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self,true)?;
+        let current_listing = self
+            .directory_cache
+            .get_directory_listing(parent, &self, true)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 
@@ -269,20 +271,83 @@ impl UnlockedVault {
         Ok(decrypted_blob)
     }
 
-    pub fn  list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
+    pub fn list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
         let parent = path.parent().unwrap_or(Path::new("/"));
         eprintln!("(vault) Listing files in path: {}", parent.display());
 
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self,false)?;
+        let current_listing = self
+            .directory_cache
+            .get_directory_listing(parent, &self, false)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 
-        let files: Vec<String> = current_listing
-            .files
-            .keys()
-            .cloned()
-            .collect();
+        let files: Vec<String> = current_listing.files.keys().cloned().collect();
 
         Ok(files)
+    }
+
+    pub fn create_folder(&self, path: &Path, recursive: bool) -> Result<(), VaultError> {
+        let parent = path.parent().unwrap_or(Path::new("/"));
+        eprintln!("(vault) Creating folder in path: {}", parent.display());
+
+        let mut current_listing = self
+            .directory_cache
+            .get_directory_listing(parent, &self, true)?;
+
+        eprintln!("(vault) Current listing before creation: {:?}", current_listing);
+
+        let folder_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        if current_listing.directories.contains_key(folder_name) {
+            return Err(VaultError::ResourceAlreadyExists);
+        }
+
+        let new_blob_id = Uuid::new_v4().to_string();
+        let new_directory_listing = DirectoryListing::new(new_blob_id.clone());
+        let new_listing_json =
+            serde_json::to_string(&new_directory_listing).map_err(|_| VaultError::Serialization)?;
+
+        self.storage
+            .store_blob(&new_blob_id, new_listing_json.as_bytes())
+            .map_err(|e| {
+                VaultError::Storage(format!(
+                    "Failed to store new directory {}: {:#?}",
+                    path.display(),
+                    e
+                ))
+            })?;
+
+        let metadata = EntryMetadata {
+            entry_type: EntryType::Directory,
+            blob_id: new_blob_id.clone(),
+        };
+
+        current_listing
+            .directories
+            .insert(folder_name.to_string(), metadata);
+
+        let updated_listing_json =
+            serde_json::to_string(&current_listing).map_err(|_| VaultError::Serialization)?;
+
+        self.storage
+            .store_blob(&current_listing.blob_id, updated_listing_json.as_bytes())
+            .map_err(|e| {
+                VaultError::Storage(format!(
+                    "Failed to update directory {}: {:#?}",
+                    path.display(),
+                    e
+                ))
+            })?;
+
+        eprintln!(
+            "(vault) Successfully created folder {} with blob ID: {}",
+            path.display(),
+            new_blob_id
+        );
+
+        Ok(())
     }
 }
