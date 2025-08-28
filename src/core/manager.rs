@@ -155,7 +155,7 @@ impl VaultManager {
         }
     }
 
-    pub fn vault_unlock_preflight(&self, vault_name: &str) -> Result<(), VaultError> {
+    pub fn vault_exists_preflight(&self, vault_name: &str) -> Result<(), VaultError> {
         let vault_info = self
             .vaults
             .get(vault_name)
@@ -216,6 +216,17 @@ impl VaultManager {
         // Write the manifest data to the manifest file
         std::fs::write(manifest_path, data).map_err(|e| VaultError::Io(e))?;
         Ok(())
+    }
+
+    pub fn delete_vault(&mut self, vault_name: &str)->Result<(),VaultError>{
+        if let Some(vault)=self.vaults.get(vault_name){
+            let uri= URIParser::parse(&vault.location)?;
+            let storage_backend=connect(&uri)?;
+            storage_backend.destroy()?;
+            Ok(())
+        }else{
+            return Err(VaultError::VaultNotFound);
+        }
     }
 
     pub fn import_file(

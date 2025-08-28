@@ -244,7 +244,7 @@ impl UnlockedVault {
         eprintln!("(vault) Exporting file from path: {}", parent.display());
 
         // TODO: When implementing the delete from Vault while exporting functionality, we need to ensure the cache is updated accordingly.
-        let current_listing = self.directory_cache.get_directory_listing(parent, &self,false)?;
+        let current_listing = self.directory_cache.get_directory_listing(parent, &self,true)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 

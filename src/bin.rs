@@ -189,15 +189,19 @@ struct ShellCli {
 #[derive(Subcommand, Debug)]
 enum ShellCommands {
     Unlock {
-        #[arg(index=1,short, long)]
+        #[arg(index = 1, short, long)]
         vault_name: String,
     },
     List,
     New {
-        #[arg(index=1,short, long)]
+        #[arg(index = 1, short, long)]
         vault_name: String,
         #[arg(short, long)]
         path: Option<String>,
+    },
+    Destroy {
+        #[arg(index = 1, short, long)]
+        vault_name: String,
     },
     Ls {
         #[arg(default_value = ".")]
@@ -296,28 +300,25 @@ impl VaultShell {
             match ShellCli::try_parse_from(trimmed.split_whitespace()) {
                 Ok(cli) => match self.execute_command(cli.command) {
                     Ok(_) => {}
-                    Err(e) => {
-                        match e {
-                            VaultError::NoActiveVault => {
-                                println!("ERROR: {}", e);
-                                continue;
-                            },
-                            VaultError::ContinuingExecution => {
-                                continue;
-                            }
-                            _ => {
-                                println!("ERROR: {}", e);
-                                break;
-                            }
+                    Err(e) => match e {
+                        VaultError::NoActiveVault => {
+                            println!("ERROR: {}", e);
+                            continue;
                         }
-                    }
+                        VaultError::ContinuingExecution => {
+                            continue;
+                        }
+                        _ => {
+                            println!("ERROR: {}", e);
+                            break;
+                        }
+                    },
                 },
                 Err(e) => {
                     eprintln!("ERROR: {}", e);
                     continue;
                 }
             }
-            
         }
         Ok(())
     }
@@ -338,50 +339,56 @@ impl VaultShell {
     }
 
     fn cmd_unlock(&mut self, vault_name: &str) -> Result<(), VaultError> {
-        if let Err(e) = self.manager.vault_unlock_preflight(vault_name) {
-        match e {
-            VaultError::VaultManifestNotFound => {
-                eprintln!("Error: Vault '{}' is registered, but its files could not be found.", vault_name);
-                eprintln!("This can happen if the vault was moved, deleted, or is on a disconnected drive.");
-                
-                println!("\nWould you like to remove this vault's registration? [y/N]");
-                
-                let mut input = String::new();
-                if std::io::stdin().read_line(&mut input).is_ok() {
-                    if input.trim().eq_ignore_ascii_case("y") {
-                        println!("Removing vault registration...");
-                        match self.manager.remove_vault_registration(vault_name) {
-                            Ok(_) => println!("Successfully removed registration for '{}'.", vault_name),
-                            Err(e) => eprintln!("Failed to remove registration: {:?}", e),
+        if let Err(e) = self.manager.vault_exists_preflight(vault_name) {
+            match e {
+                VaultError::VaultManifestNotFound => {
+                    eprintln!(
+                        "Error: Vault '{}' is registered, but its files could not be found.",
+                        vault_name
+                    );
+                    eprintln!(
+                        "This can happen if the vault was moved, deleted, or is on a disconnected drive."
+                    );
+
+                    println!("\nWould you like to remove this vault's registration? [y/N]");
+
+                    let mut input = String::new();
+                    if std::io::stdin().read_line(&mut input).is_ok() {
+                        if input.trim().eq_ignore_ascii_case("y") {
+                            println!("Removing vault registration...");
+                            match self.manager.remove_vault_registration(vault_name) {
+                                Ok(_) => println!(
+                                    "Successfully removed registration for '{}'.",
+                                    vault_name
+                                ),
+                                Err(e) => eprintln!("Failed to remove registration: {:?}", e),
+                            }
+                        } else {
+                            println!("No action taken. The registration was not removed.");
                         }
-                    } else {
-                        println!("No action taken. The registration was not removed.");
                     }
                 }
+                VaultError::VaultNotFound => {
+                    eprintln!("Error: Vault '{}' is not registered.", vault_name);
+                }
+                _ => {
+                    eprintln!("An unexpected error occurred: {:?}", e);
+                }
             }
-            VaultError::VaultNotFound => {
-                eprintln!("Error: Vault '{}' is not registered.", vault_name);
-            }
-            _ => {
-                eprintln!("An unexpected error occurred: {:?}", e);
-            }
+            return Ok(());
         }
-        return Ok(());
-    }
         match rpassword::prompt_password("Enter the password for the vault: ") {
-            Ok(password) => {
-                match self.manager.unlock_vault(vault_name, &password) {
-                    Ok(_) => {
-                        self.active_vault_name = Some(vault_name.to_string());
-                        self.current_dir = PathBuf::from("/");
-                        println!("Vault '{}' unlocked successfully.", vault_name);
-                    }
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        return Err(VaultError::ContinuingExecution);
-                    }
+            Ok(password) => match self.manager.unlock_vault(vault_name, &password) {
+                Ok(_) => {
+                    self.active_vault_name = Some(vault_name.to_string());
+                    self.current_dir = PathBuf::from("/");
+                    println!("Vault '{}' unlocked successfully.", vault_name);
                 }
-            }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return Err(VaultError::ContinuingExecution);
+                }
+            },
             Err(_) => {
                 eprintln!("Failed to read password.");
             }
@@ -456,21 +463,21 @@ impl VaultShell {
         &mut self,
         vault_path: &Path,
         vault_name: &str,
-        host_path: Option<PathBuf>
-    )->Result<(),VaultError>{
-        match self.manager.export_file(vault_name, &vault_path){
-            Ok(content)=>{
-                let final_host_path= host_path.unwrap_or_else(||{
-                    let filename= vault_path.file_name().unwrap_or(std::ffi::OsStr::new("exported_file"));
+        host_path: Option<PathBuf>,
+    ) -> Result<(), VaultError> {
+        match self.manager.export_file(vault_name, &vault_path) {
+            Ok(content) => {
+                let final_host_path = host_path.unwrap_or_else(|| {
+                    let filename = vault_path
+                        .file_name()
+                        .unwrap_or(std::ffi::OsStr::new("exported_file"));
                     std::env::current_dir().unwrap().join(filename)
                 });
-                std::fs::write(&final_host_path,content).map_err(|e|VaultError::Io(e))?;
-                println!("File exported to {}",final_host_path.display());
+                std::fs::write(&final_host_path, content).map_err(|e| VaultError::Io(e))?;
+                println!("File exported to {}", final_host_path.display());
                 Ok(())
             }
-            Err(e)=>{
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -507,6 +514,28 @@ impl VaultShell {
         Ok(())
     }
 
+    fn cmd_destroy(&mut self, vault_name: &str) -> Result<(), VaultError> {
+        println!(
+            "! DANGER: You are about to permanently delete the vault '{}' and all of its contents.",
+            vault_name
+        );
+        println!("! This action is irreversible.");
+        println!(
+            "! To confirm, please type the name of the vault ('{}'):",
+            vault_name
+        );
+        let mut confirmation = String::new();
+        std::io::stdin().read_line(&mut confirmation).unwrap();
+        if confirmation.trim().eq(vault_name) {
+            self.manager.delete_vault(vault_name)?;
+            self.manager.remove_vault_registration(vault_name)?;
+            println!("Vault '{}' has been deleted.", vault_name);
+        } else {
+            println!("Vault deletion cancelled.");
+        }
+        Ok(())
+    }
+
     fn execute_command(&mut self, command: ShellCommands) -> Result<(), VaultError> {
         match command {
             ShellCommands::Unlock { vault_name } => {
@@ -535,7 +564,7 @@ impl VaultShell {
                 };
 
                 self.cmd_import(&host_path, &name, &vault_path)?;
-            },
+            }
             ShellCommands::Export {
                 host_path,
                 vault_name,
@@ -550,13 +579,16 @@ impl VaultShell {
                 };
 
                 self.cmd_export(&vault_path, &name, host_path)?;
-            },
-          
+            }
+
             ShellCommands::Exit => {
                 std::process::exit(0);
             }
             ShellCommands::Pwd => {
                 println!("{}", self.current_dir.display());
+            }
+            ShellCommands::Destroy { vault_name } => {
+                self.cmd_destroy(&vault_name)?;
             }
             _ => {
                 eprintln!("Command not implemented yet: {:?}", command);
