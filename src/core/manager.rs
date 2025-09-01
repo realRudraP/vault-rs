@@ -276,6 +276,27 @@ impl VaultManager {
         Ok(())
     }
 
+    pub fn move_file(&self, vault_name: &str, src: &Path, dest: &Path) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Moving file in vault '{}': {} to {}",
+            vault_name,
+            src.display(),
+            dest.display()
+        );
+        vault.move_file(src, dest)?;
+        println!(
+            "Successfully moved from {}:{} to {}:{}",
+            vault_name,
+            src.display(),
+            vault_name,
+            dest.display()
+        );
+        Ok(())
+    }
     pub fn export_file(&self, vault_name: &str, vault_path: &Path) -> Result<Vec<u8>, VaultError> {
         let vault = self
             .unlocked_vaults

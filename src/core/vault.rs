@@ -271,6 +271,47 @@ impl UnlockedVault {
         Ok(decrypted_blob)
     }
 
+    pub fn move_file(&self, source_path:&Path,destination_path:&Path)->Result<(),VaultError>{
+        let source_parent= source_path.parent().unwrap_or(Path::new("/"));
+        let destination_parent= destination_path.parent().unwrap_or(Path::new("/"));
+
+        eprintln!("(vault) Moving file from {} to {}", source_path.display(), destination_path.display());
+
+        let mut current_listing = self
+            .directory_cache
+            .get_directory_listing(source_parent, &self, true)?;
+
+        let file_name = source_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        let file_metadata = current_listing
+            .files
+            .remove(file_name)
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        
+
+
+        let updated_listing_json = serde_json::to_string(&current_listing)
+            .map_err(|_| VaultError::Serialization)?;
+        self.storage.update_blob(&current_listing.blob_id, updated_listing_json.as_bytes())?;
+
+        // Now we need to add the file to the destination directory
+        let mut destination_listing = self
+            .directory_cache
+            .get_directory_listing(destination_parent, &self, true)?;
+
+        destination_listing.files.insert(file_name.to_string(), file_metadata);
+
+        let new_listing_json = serde_json::to_string(&destination_listing)
+            .map_err(|_| VaultError::Serialization)?;
+        self.storage.update_blob(&destination_listing.blob_id, new_listing_json.as_bytes())?;
+
+        Ok(())
+    }
+
     pub fn delete_file(&self, path: &Path)->Result<(),VaultError>{
         let parent = path.parent().unwrap_or(Path::new("/"));
         let mut current_listing = self

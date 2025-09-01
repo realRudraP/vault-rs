@@ -235,10 +235,8 @@ enum ShellCommands {
         recursive: bool,
     },
     Mv {
-        source: String,
-        destination: String,
-        #[arg(short, long)]
-        recursive: bool,
+        source: PathBuf,
+        destination: PathBuf,
     },
     Clear,
     Import {
@@ -346,6 +344,15 @@ impl VaultShell {
             .ok_or(VaultError::NoActiveVault)?;
         self.manager
             .create_folder_in_vault(&vault, &current_path.join(folder_name), recursive)?;
+        Ok(())
+    }
+
+    fn cmd_mv(&self, source:&PathBuf, destination: &PathBuf) -> Result<(), VaultError> {
+        let vault = self
+            .active_vault_name
+            .as_ref()
+            .ok_or(VaultError::NoActiveVault)?;
+        self.manager.move_file(&vault, source, destination)?;
         Ok(())
     }
 
@@ -632,6 +639,9 @@ impl VaultShell {
                     eprintln!("Error removing file: {}", e);
                     VaultError::ContinuingExecution
                 })?;
+            }
+            ShellCommands::Mv { source, destination } => {
+                self.cmd_mv(&source, &destination)?;
             }
             _ => {
                 eprintln!("Command not implemented yet: {:?}", command);
