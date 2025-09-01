@@ -226,11 +226,7 @@ enum ShellCommands {
         path: String,
     },
     Rm {
-        path: String,
-        #[arg(short, long)]
-        force: bool,
-        #[arg(short, long)]
-        recursive: bool,
+        path: PathBuf,
     },
     Cp {
         source: String,
@@ -338,9 +334,28 @@ impl VaultShell {
         }
     }
 
-    fn cmd_mkdir(&self, folder_name:&str,current_path:&Path,recursive:bool)->Result<(),VaultError>{
-        let vault = self.active_vault_name.as_ref().ok_or(VaultError::NoActiveVault)?;
-        self.manager.create_folder_in_vault(&vault, &current_path.join(folder_name), recursive)?;
+    fn cmd_mkdir(
+        &self,
+        folder_name: &str,
+        current_path: &Path,
+        recursive: bool,
+    ) -> Result<(), VaultError> {
+        let vault = self
+            .active_vault_name
+            .as_ref()
+            .ok_or(VaultError::NoActiveVault)?;
+        self.manager
+            .create_folder_in_vault(&vault, &current_path.join(folder_name), recursive)?;
+        Ok(())
+    }
+
+    fn cmd_rm(&self, file_name: &PathBuf, current_path: &Path) -> Result<(), VaultError> {
+        let vault = self
+            .active_vault_name
+            .as_ref()
+            .ok_or(VaultError::NoActiveVault)?;
+        self.manager
+            .delete_file(&vault, &current_path.join(file_name))?;
         Ok(())
     }
 
@@ -439,6 +454,8 @@ impl VaultShell {
 
         Ok(())
     }
+
+    
 
     fn cmd_import(
         &mut self,
@@ -609,6 +626,12 @@ impl VaultShell {
             }
             ShellCommands::Mkdir { path, recursive } => {
                 self.cmd_mkdir(&path, &self.current_dir, recursive)?;
+            }
+            ShellCommands::Rm { path } => {
+                self.cmd_rm(&path, &self.current_dir).map_err(|e| {
+                    eprintln!("Error removing file: {}", e);
+                    VaultError::ContinuingExecution
+                })?;
             }
             _ => {
                 eprintln!("Command not implemented yet: {:?}", command);

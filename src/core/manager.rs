@@ -257,6 +257,25 @@ impl VaultManager {
         Ok(())
     }
 
+    pub fn delete_file(&self, vault_name: &str, vault_path: &Path) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Deleting file from vault '{}': {}",
+            vault_name,
+            vault_path.display()
+        );
+        vault.delete_file(vault_path)?;
+        println!(
+            "Successfully deleted from {}:{}",
+            vault_name,
+            vault_path.display()
+        );
+        Ok(())
+    }
+
     pub fn export_file(&self, vault_name: &str, vault_path: &Path) -> Result<Vec<u8>, VaultError> {
         let vault = self
             .unlocked_vaults
@@ -281,7 +300,7 @@ impl VaultManager {
         vault_name: &str,
         folder_path: &Path,
         recursive: bool,
-    )->Result<(),VaultError>{
+    ) -> Result<(), VaultError> {
         let vault = self
             .unlocked_vaults
             .get(vault_name)

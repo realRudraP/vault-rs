@@ -115,11 +115,10 @@ impl DirectoryCache {
         internal.cache.put(PathBuf::from("/"), root_listing.clone());
     }
 
-
-    fn normalize_path(p:&Path)->PathBuf{
-        if p.as_os_str().is_empty(){
+    fn normalize_path(p: &Path) -> PathBuf {
+        if p.as_os_str().is_empty() {
             PathBuf::from("/")
-        }else{
+        } else {
             p.to_path_buf()
         }
     }
@@ -195,13 +194,14 @@ impl DirectoryCache {
         // If we've reached the root and it's not cached, but we have the root blob ID,
         // we can fetch it directly from the filesystem
         let root_path = PathBuf::from("/");
-        if !internal.cache.contains(&root_path) && 
-           (paths_to_fetch.contains(&root_path) || current_path == root_path) {
+        if !internal.cache.contains(&root_path)
+            && (paths_to_fetch.contains(&root_path) || current_path == root_path)
+        {
             if let Some(ref root_blob_id) = internal.root_blob_id {
                 let root_listing = vault
                     .get_directory_listing_from_blob_id(root_blob_id)
                     .map_err(|_| VaultError::ResourceNotFound)?;
-                
+
                 // Cache the root directory unless it's the target and mark_dirty is true
                 let should_cache_root = !mark_dirty || dir_path_buf != root_path;
                 if should_cache_root {
@@ -235,7 +235,7 @@ impl DirectoryCache {
                     .file_name()
                     .and_then(|s| s.to_str())
                     .ok_or(VaultError::InvalidPath)?;
-                
+
                 let parent_listing = if i == 0 {
                     internal
                         .cache
@@ -286,7 +286,7 @@ impl DirectoryCache {
     }
 
     /// Removes a path and all of its parent directories from the cache.
-    /// 
+    ///
     /// Note: The root blob ID is preserved even if the root directory is evicted,
     /// allowing for direct filesystem access when needed.
     pub fn invalidate_path_and_parents(&self, path: &Path) {
@@ -332,7 +332,7 @@ impl DirectoryCache {
     }
 
     /// Clears the entire cache and resets all performance statistics.
-    /// 
+    ///
     /// Note: The root blob ID is preserved to maintain the ability to fetch
     /// the root directory directly from the filesystem.
     pub fn clear(&self) {
@@ -345,7 +345,7 @@ impl DirectoryCache {
     }
 
     /// Returns the stored root blob ID, if available.
-    /// 
+    ///
     /// This can be useful for debugging or when you need to access the root blob ID
     /// directly without going through the cache.
     pub fn get_root_blob_id(&self) -> Option<String> {
@@ -444,7 +444,7 @@ mod tests {
             internal.cache.put(PathBuf::from("/a/b"), listing.clone());
         }
         assert_eq!(cache.stats().current_size, 3); // root + /a + /a/b
-        
+
         cache.invalidate_path_and_parents(Path::new("/a/b"));
         assert_eq!(cache.stats().current_size, 0);
         // Root blob ID should still be available

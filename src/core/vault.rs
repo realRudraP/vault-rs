@@ -271,6 +271,35 @@ impl UnlockedVault {
         Ok(decrypted_blob)
     }
 
+    pub fn delete_file(&self, path: &Path)->Result<(),VaultError>{
+        let parent = path.parent().unwrap_or(Path::new("/"));
+        let mut current_listing = self
+            .directory_cache
+            .get_directory_listing(parent, &self, true)?;
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        let file_metadata = current_listing
+            .files
+            .get(file_name)
+            .ok_or(VaultError::ResourceNotFound)?;
+
+        let blob_id = &file_metadata.blob_id;
+
+        self.storage.delete_blob(&blob_id)
+            .map_err(|e| {
+                VaultError::Storage(format!("Failed to delete file {}: {:#?}", path.display(), e))
+            })?;
+        current_listing.files.remove(file_name);
+        let updated_listing_json=serde_json::to_string(&current_listing)
+            .map_err(|_| VaultError::Serialization)?;
+        self.storage.update_blob(&current_listing.blob_id, updated_listing_json.as_bytes())?;
+        Ok(())
+    }
+
     pub fn list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
         let parent = path.parent().unwrap_or(Path::new("/"));
         eprintln!("(vault) Listing files in path: {}", parent.display());
@@ -294,7 +323,10 @@ impl UnlockedVault {
             .directory_cache
             .get_directory_listing(parent, &self, true)?;
 
-        eprintln!("(vault) Current listing before creation: {:?}", current_listing);
+        eprintln!(
+            "(vault) Current listing before creation: {:?}",
+            current_listing
+        );
 
         let folder_name = path
             .file_name()
