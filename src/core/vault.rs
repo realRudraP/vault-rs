@@ -337,17 +337,17 @@ impl UnlockedVault {
         current_listing.files.remove(file_name);
         let updated_listing_json=serde_json::to_string(&current_listing)
             .map_err(|_| VaultError::Serialization)?;
+        self.directory_cache.invalidate_path_and_parents(path);
         self.storage.update_blob(&current_listing.blob_id, updated_listing_json.as_bytes())?;
         Ok(())
     }
 
     pub fn list_files(&self, path: &Path) -> Result<Vec<String>, VaultError> {
-        let parent = path.parent().unwrap_or(Path::new("/"));
-        eprintln!("(vault) Listing files in path: {}", parent.display());
+        eprintln!("(vault) Listing files in path: {}", path.display());
 
         let current_listing = self
             .directory_cache
-            .get_directory_listing(parent, &self, false)?;
+            .get_directory_listing(path, &self, false)?;
 
         eprintln!("(vault) Current listing: {:?}", current_listing);
 
