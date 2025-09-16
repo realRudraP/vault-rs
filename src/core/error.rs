@@ -1,5 +1,5 @@
-use thiserror::Error;
 use std::io;
+use thiserror::Error;
 
 use crate::core::crypto::CryptoError;
 
@@ -58,6 +58,9 @@ pub enum VaultError {
 
     #[error("{0}")]
     Generic(String),
+
+    #[error("resource already exists")]
+    ResourceAlreadyExists,
 
     #[error("unknown error: {0}")]
     Unknown(String),

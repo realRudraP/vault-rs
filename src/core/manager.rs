@@ -155,7 +155,7 @@ impl VaultManager {
         }
     }
 
-    pub fn vault_unlock_preflight(&self, vault_name: &str) -> Result<(), VaultError> {
+    pub fn vault_exists_preflight(&self, vault_name: &str) -> Result<(), VaultError> {
         let vault_info = self
             .vaults
             .get(vault_name)
@@ -218,6 +218,17 @@ impl VaultManager {
         Ok(())
     }
 
+    pub fn delete_vault(&mut self, vault_name: &str) -> Result<(), VaultError> {
+        if let Some(vault) = self.vaults.get(vault_name) {
+            let uri = URIParser::parse(&vault.location)?;
+            let storage_backend = connect(&uri)?;
+            storage_backend.destroy()?;
+            Ok(())
+        } else {
+            return Err(VaultError::VaultNotFound);
+        }
+    }
+
     pub fn import_file(
         &self,
         vault_name: &str,
@@ -246,6 +257,46 @@ impl VaultManager {
         Ok(())
     }
 
+    pub fn delete_file(&self, vault_name: &str, vault_path: &Path) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Deleting file from vault '{}': {}",
+            vault_name,
+            vault_path.display()
+        );
+        vault.delete_file(vault_path)?;
+        println!(
+            "Successfully deleted from {}:{}",
+            vault_name,
+            vault_path.display()
+        );
+        Ok(())
+    }
+
+    pub fn move_file(&self, vault_name: &str, src: &Path, dest: &Path) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        eprintln!(
+            "(manager)Moving file in vault '{}': {} to {}",
+            vault_name,
+            src.display(),
+            dest.display()
+        );
+        vault.move_file(src, dest)?;
+        println!(
+            "Successfully moved from {}:{} to {}:{}",
+            vault_name,
+            src.display(),
+            vault_name,
+            dest.display()
+        );
+        Ok(())
+    }
     pub fn export_file(&self, vault_name: &str, vault_path: &Path) -> Result<Vec<u8>, VaultError> {
         let vault = self
             .unlocked_vaults
@@ -263,6 +314,20 @@ impl VaultManager {
             vault_path.display()
         );
         Ok(content)
+    }
+
+    pub fn create_folder_in_vault(
+        &self,
+        vault_name: &str,
+        folder_path: &Path,
+        recursive: bool,
+    ) -> Result<(), VaultError> {
+        let vault = self
+            .unlocked_vaults
+            .get(vault_name)
+            .ok_or(VaultError::VaultNotFound)?;
+        vault.create_folder(folder_path, recursive)?;
+        Ok(())
     }
 
     pub fn list_files_from_vault(

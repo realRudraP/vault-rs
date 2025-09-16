@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::error::VaultError;
 use super::manager::{StorageLocations, URIParser};
@@ -22,6 +22,10 @@ pub trait StorageBackend: std::fmt::Debug {
     fn delete_blob(&self, id: &str) -> Result<(), VaultError>;
 
     fn blob_exists(&self, id: &str) -> Result<bool, VaultError>;
+
+    fn update_blob(&self, id:&str, data: &[u8]) -> Result<(), VaultError>;
+
+    fn destroy(self: Box<Self>) -> Result<(), VaultError>;
 }
 
 /*
@@ -82,10 +86,20 @@ impl LocalStorageBackend {
 impl StorageBackend for LocalStorageBackend {
     fn store_blob(&self, id: &str, data: &[u8]) -> Result<(), VaultError> {
         let file_path = self.root_path.join(id);
-        let mut file=OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(file_path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(file_path)?;
+        file.write_all(data).map_err(|e| VaultError::Io(e))?;
+        Ok(())
+    }
+
+    fn update_blob(&self, id:&str, data: &[u8]) -> Result<(), VaultError> {
+        let file_path = self.root_path.join(id);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(file_path)?;
         file.write_all(data).map_err(|e| VaultError::Io(e))?;
         Ok(())
     }
@@ -103,5 +117,10 @@ impl StorageBackend for LocalStorageBackend {
     fn blob_exists(&self, id: &str) -> Result<bool, VaultError> {
         let file_path = self.root_path.join(id);
         Ok(file_path.exists())
+    }
+
+    fn destroy(self: Box<Self>) -> Result<(), VaultError> {
+        std::fs::remove_dir_all(PathBuf::from(&self.root_path)).map_err(VaultError::Io)?;
+        Ok(())
     }
 }

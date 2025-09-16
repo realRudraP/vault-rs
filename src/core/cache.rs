@@ -21,6 +21,9 @@ use crate::core::vault::{DirectoryListing, UnlockedVault};
 struct DirectoryCacheInternal {
     /// The LRU cache storing directory paths and their corresponding listings.
     cache: LruCache<PathBuf, DirectoryListing>,
+    /// The blob ID of the root directory, stored separately to allow direct filesystem access
+    /// when the root directory is evicted from the cache.
+    root_blob_id: Option<String>,
     /// Counter for cache hits. Incremented when a requested item is found in the cache.
     hits: u64,
     /// Counter for cache misses. Incremented when a requested item is not in the cache.
@@ -84,6 +87,7 @@ impl DirectoryCache {
         let capacity = std::cmp::max(1, max_size);
         let internal = DirectoryCacheInternal {
             cache: LruCache::new(NonZeroUsize::new(capacity).unwrap()),
+            root_blob_id: None,
             hits: 0,
             misses: 0,
             evictions: 0,
@@ -94,146 +98,197 @@ impl DirectoryCache {
         }
     }
 
-    /// Initializes the cache by inserting the root directory listing.
+    /// Initializes the cache by inserting the root directory listing and storing its blob ID.
     ///
     /// This method should be called once after the vault is unlocked to "warm up"
     /// the cache with the root entry. All subsequent cache lookups start from an
     /// ancestor, and seeding the root ensures there is always a valid starting point.
+    /// The root blob ID is stored separately to enable direct filesystem access
+    /// even if the root directory is evicted from the cache.
     ///
     /// # Arguments
     ///
     /// * `root_listing` - The `DirectoryListing` for the vault's root path (`/`).
     pub fn init(&self, root_listing: DirectoryListing) {
         let mut internal = self.internal.lock().unwrap();
+        internal.root_blob_id = Some(root_listing.blob_id.clone());
         internal.cache.put(PathBuf::from("/"), root_listing.clone());
-        internal.cache.put(PathBuf::from(""), root_listing.clone());
     }
 
-    /// Retrieves a directory listing, using the cache if possible or fetching from the vault.
-///
-/// This is the core method of the cache. It follows an intelligent fetch strategy:
-/// 1. First, it attempts a direct lookup in the cache for the requested `dir_path`.
-/// 2. On a cache hit, it clones the listing and returns it immediately along with its blob ID.
-/// 3. On a cache miss, it walks up the directory tree from `dir_path` until it finds
-///    a cached parent directory.
-/// 4. It then fetches the required child directories sequentially from the vault,
-///    populating the cache along the way.
-///
-/// # Arguments
-///
-/// * `dir_path` - The absolute path of the directory to retrieve from the vault.
-/// * `vault` - A reference to the `UnlockedVault` to use for fetching if the data is not cached.
-/// * `mark_dirty` - If true, the target directory listing will be removed from cache after retrieval to ensure fresh data on next fetch.
-///
-/// # Returns
-///
-/// * `Ok(DirectoryListing)` - The requested directory listing.
-/// * `Err(VaultError::ResourceNotFound)` - If the directory or one of its parents does not exist in the vault.
-/// * `Err(VaultError::CacheInconsistent)` - If the cache is in an unexpected state (e.g., a parent is missing when it should exist).
-/// * `Err(VaultError::InvalidPath)` - If the provided path is malformed.
-///
-/// # Note
-///
-/// This method assumes that `DirectoryListing` has a `blob_id` field that contains
-/// the blob ID of the blob that stores this directory listing.
-pub fn get_directory_listing(
-    &self,
-    dir_path: &Path,
-    vault: &UnlockedVault,
-    mark_dirty: bool,
-) -> Result<DirectoryListing, VaultError> {
-    let mut internal = self.internal.lock().unwrap();
-    let dir_path_buf = dir_path.to_path_buf();
-
-    // Check if we have it in cache (cache hit)
-    if let Some(listing) = internal.cache.get(&dir_path_buf).cloned() {
-        internal.hits += 1;
-        let result = listing.clone();
-        
-        // If mark_dirty is true, remove it from cache so next fetch reads from fs
-        if mark_dirty {
-            internal.cache.pop(&dir_path_buf);
-        }
-        
-        return Ok(result);
-    }
-
-    // It's a cache miss, proceed to fetch from vault
-    internal.misses += 1;
-
-    let mut current_path = dir_path_buf.clone();
-    let mut paths_to_fetch = Vec::new();
-
-    while !internal.cache.contains(&current_path) {
-        paths_to_fetch.push(current_path.clone());
-        if let Some(parent) = current_path.parent() {
-            current_path = parent.to_path_buf();
+    fn normalize_path(p: &Path) -> PathBuf {
+        if p.as_os_str().is_empty() {
+            PathBuf::from("/")
         } else {
-            break;
+            p.to_path_buf()
         }
     }
+    /// Retrieves a directory listing, using the cache if possible or fetching from the vault.
+    ///
+    /// This is the core method of the cache. It follows an intelligent fetch strategy:
+    /// 1. First, it attempts a direct lookup in the cache for the requested `dir_path`.
+    /// 2. On a cache hit, it clones the listing and returns it immediately along with its blob ID.
+    /// 3. On a cache miss, it walks up the directory tree from `dir_path` until it finds
+    ///    a cached parent directory or reaches the root.
+    /// 4. If the root is not cached but the root blob ID is available, it fetches the root
+    ///    directly from the filesystem using the stored blob ID.
+    /// 5. It then fetches the required child directories sequentially from the vault,
+    ///    populating the cache along the way.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir_path` - The absolute path of the directory to retrieve from the vault.
+    /// * `vault` - A reference to the `UnlockedVault` to use for fetching if the data is not cached.
+    /// * `mark_dirty` - If true, the target directory listing will be removed from cache after retrieval to ensure fresh data on next fetch.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(DirectoryListing)` - The requested directory listing.
+    /// * `Err(VaultError::ResourceNotFound)` - If the directory or one of its parents does not exist in the vault.
+    /// * `Err(VaultError::CacheInconsistent)` - If the cache is in an unexpected state (e.g., a parent is missing when it should exist).
+    /// * `Err(VaultError::InvalidPath)` - If the provided path is malformed.
+    ///
+    /// # Note
+    ///
+    /// This method assumes that `DirectoryListing` has a `blob_id` field that contains
+    /// the blob ID of the blob that stores this directory listing.
+    pub fn get_directory_listing(
+        &self,
+        dir_path: &Path,
+        vault: &UnlockedVault,
+        mark_dirty: bool,
+    ) -> Result<DirectoryListing, VaultError> {
+        let mut internal = self.internal.lock().unwrap();
+        let dir_path_buf = DirectoryCache::normalize_path(dir_path);
 
-    let mut last_fetched_listing: Option<DirectoryListing> = None;
+        // Check if we have it in cache (cache hit)
+        if let Some(listing) = internal.cache.get(&dir_path_buf).cloned() {
+            internal.hits += 1;
+            eprintln!("Cache hit for directory: {}", dir_path_buf.display());
+            let result = listing.clone();
 
-    for (i, path) in paths_to_fetch.iter().rev().enumerate() {
-        let parent_path = path.parent().ok_or(VaultError::InvalidPath)?;
-
-        let child_metadata = {
-            let child_name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .ok_or(VaultError::InvalidPath)?;
-
-            let parent_listing = if i == 0 {
-                internal
-                    .cache
-                    .get(&parent_path.to_path_buf())
-                    .ok_or(VaultError::CacheInconsistent)?
-            } else {
-                last_fetched_listing
-                    .as_ref()
-                    .ok_or(VaultError::CacheInconsistent)?
-            };
-
-            parent_listing
-                .directories
-                .get(child_name)
-                .ok_or(VaultError::ResourceNotFound)?
-                .clone()
-        };
-
-        let listing = vault
-            .get_directory_listing_from_blob_id(&child_metadata.blob_id)
-            .map_err(|_| VaultError::ResourceNotFound)?;
-
-        // Only cache this directory if it's not the target directory or mark_dirty is false
-        let should_cache = !mark_dirty || path != &dir_path_buf;
-        
-        if should_cache {
-            // An eviction occurs if the cache is full AND we are adding a new key.
-            let is_full = internal.cache.len() == internal.cache.cap().get();
-            let key_exists = internal.cache.contains(path);
-            if is_full && !key_exists {
-                internal.evictions += 1;
+            // If mark_dirty is true, remove it from cache so next fetch reads from fs
+            if mark_dirty {
+                eprintln!("Entry popped from cache");
+                internal.cache.pop(&dir_path_buf);
             }
 
-            internal.cache.put(path.to_path_buf(), listing.clone());
+            return Ok(result);
         }
-        
-        last_fetched_listing = Some(listing);
-    }
 
-    let final_listing = last_fetched_listing.ok_or(VaultError::CacheInconsistent)?;
-    
-    // If mark_dirty is true and we just fetched the target directory, remove it from cache
-    if mark_dirty && paths_to_fetch.contains(&dir_path_buf) {
-        internal.cache.pop(&dir_path_buf);
+        // It's a cache miss, proceed to fetch from vault
+        internal.misses += 1;
+
+        let mut current_path = dir_path_buf.clone();
+        let mut paths_to_fetch = Vec::new();
+
+        // Walk up the directory tree until we find a cached parent or reach the root
+        while !internal.cache.contains(&current_path) {
+            paths_to_fetch.push(current_path.clone());
+            if let Some(parent) = current_path.parent() {
+                current_path = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+
+        // If we've reached the root and it's not cached, but we have the root blob ID,
+        // we can fetch it directly from the filesystem
+        let root_path = PathBuf::from("/");
+        if !internal.cache.contains(&root_path)
+            && (paths_to_fetch.contains(&root_path) || current_path == root_path)
+        {
+            if let Some(ref root_blob_id) = internal.root_blob_id {
+                let root_listing = vault
+                    .get_directory_listing_from_blob_id(root_blob_id)
+                    .map_err(|_| VaultError::ResourceNotFound)?;
+
+                // Cache the root directory unless it's the target and mark_dirty is true
+                let should_cache_root = !mark_dirty || dir_path_buf != root_path;
+                if should_cache_root {
+                    eprintln!("Caching the fetched root directory now");
+                    let is_full = internal.cache.len() == internal.cache.cap().get();
+                    let key_exists = internal.cache.contains(&root_path);
+                    if is_full && !key_exists {
+                        internal.evictions += 1;
+                    }
+                    internal.cache.put(PathBuf::from("/"), root_listing.clone());
+                }
+
+                // If the target was the root directory, return it now
+                if dir_path_buf == root_path || dir_path_buf == PathBuf::from("") {
+                    return Ok(root_listing);
+                }
+            }
+        }
+
+        let mut last_fetched_listing: Option<DirectoryListing> = None;
+
+        for (i, path) in paths_to_fetch.iter().rev().enumerate() {
+            let parent_path = if path == Path::new("/") {
+                Path::new("/")
+            } else {
+                path.parent().ok_or(VaultError::InvalidPath)?
+            };
+
+            let child_metadata = {
+                let child_name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .ok_or(VaultError::InvalidPath)?;
+
+                let parent_listing = if i == 0 {
+                    internal
+                        .cache
+                        .get(&parent_path.to_path_buf())
+                        .ok_or(VaultError::CacheInconsistent)?
+                } else {
+                    last_fetched_listing
+                        .as_ref()
+                        .ok_or(VaultError::CacheInconsistent)?
+                };
+
+                parent_listing
+                    .directories
+                    .get(child_name)
+                    .ok_or(VaultError::ResourceNotFound)?
+                    .clone()
+            };
+
+            let listing = vault
+                .get_directory_listing_from_blob_id(&child_metadata.blob_id)
+                .map_err(|_| VaultError::ResourceNotFound)?;
+
+            // Only cache this directory if it's not the target directory or mark_dirty is false
+            let should_cache = !mark_dirty || path != &dir_path_buf;
+
+            if should_cache {
+                // An eviction occurs if the cache is full AND we are adding a new key.
+                let is_full = internal.cache.len() == internal.cache.cap().get();
+                let key_exists = internal.cache.contains(path);
+                if is_full && !key_exists {
+                    internal.evictions += 1;
+                }
+
+                internal.cache.put(path.to_path_buf(), listing.clone());
+            }
+
+            last_fetched_listing = Some(listing);
+        }
+
+        let final_listing = last_fetched_listing.ok_or(VaultError::CacheInconsistent)?;
+
+        // If mark_dirty is true and we just fetched the target directory, remove it from cache
+        if mark_dirty && paths_to_fetch.contains(&dir_path_buf) {
+            internal.cache.pop(&dir_path_buf);
+        }
+
+        Ok(final_listing.clone())
     }
-    
-    Ok(final_listing.clone())
-}
 
     /// Removes a path and all of its parent directories from the cache.
+    ///
+    /// Note: The root blob ID is preserved even if the root directory is evicted,
+    /// allowing for direct filesystem access when needed.
     pub fn invalidate_path_and_parents(&self, path: &Path) {
         let mut internal = self.internal.lock().unwrap();
         let mut current = Some(path.to_path_buf());
@@ -277,12 +332,25 @@ pub fn get_directory_listing(
     }
 
     /// Clears the entire cache and resets all performance statistics.
+    ///
+    /// Note: The root blob ID is preserved to maintain the ability to fetch
+    /// the root directory directly from the filesystem.
     pub fn clear(&self) {
         let mut internal = self.internal.lock().unwrap();
         internal.cache.clear();
         internal.hits = 0;
         internal.misses = 0;
         internal.evictions = 0;
+        // Note: root_blob_id is intentionally preserved
+    }
+
+    /// Returns the stored root blob ID, if available.
+    ///
+    /// This can be useful for debugging or when you need to access the root blob ID
+    /// directly without going through the cache.
+    pub fn get_root_blob_id(&self) -> Option<String> {
+        let internal = self.internal.lock().unwrap();
+        internal.root_blob_id.clone()
     }
 }
 
@@ -305,6 +373,7 @@ mod tests {
         assert_eq!(stats.hits, 0);
         assert_eq!(stats.misses, 0);
         assert_eq!(stats.evictions, 0);
+        assert_eq!(cache.get_root_blob_id(), None);
     }
 
     #[test]
@@ -318,8 +387,42 @@ mod tests {
         cache.init(root_listing);
 
         assert_eq!(cache.stats().current_size, 1);
+        assert_eq!(cache.get_root_blob_id(), Some("root_blob_id".to_string()));
         let internal = cache.internal.lock().unwrap();
         assert!(internal.cache.contains(&PathBuf::from("/")));
+    }
+
+    #[test]
+    fn test_root_blob_id_preserved_after_clear() {
+        let cache = DirectoryCache::new(10);
+        let root_listing = DirectoryListing {
+            directories: HashMap::new(),
+            files: HashMap::new(),
+            blob_id: "root_blob_id".to_string(),
+        };
+        cache.init(root_listing);
+
+        // Add some other entries
+        {
+            let mut internal = cache.internal.lock().unwrap();
+            let listing = DirectoryListing::new("other_blob_id".to_string());
+            internal.cache.put(PathBuf::from("/a"), listing);
+            internal.hits = 5;
+            internal.misses = 3;
+        }
+
+        assert_eq!(cache.stats().current_size, 2);
+        assert_eq!(cache.get_root_blob_id(), Some("root_blob_id".to_string()));
+
+        cache.clear();
+
+        // Cache should be cleared but root blob ID preserved
+        let stats = cache.stats();
+        assert_eq!(stats.current_size, 0);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(cache.get_root_blob_id(), Some("root_blob_id".to_string()));
     }
 
     #[test]
@@ -333,16 +436,19 @@ mod tests {
     fn test_invalidation() {
         let cache = DirectoryCache::new(10);
         let listing = DirectoryListing::new("root_blob_id".to_string());
+        cache.init(listing.clone());
 
         {
             let mut internal = cache.internal.lock().unwrap();
-            internal.cache.put(PathBuf::from("/"), listing.clone());
             internal.cache.put(PathBuf::from("/a"), listing.clone());
             internal.cache.put(PathBuf::from("/a/b"), listing.clone());
         }
-        assert_eq!(cache.stats().current_size, 3);
+        assert_eq!(cache.stats().current_size, 3); // root + /a + /a/b
+
         cache.invalidate_path_and_parents(Path::new("/a/b"));
         assert_eq!(cache.stats().current_size, 0);
+        // Root blob ID should still be available
+        assert_eq!(cache.get_root_blob_id(), Some("root_blob_id".to_string()));
     }
 
     #[test]

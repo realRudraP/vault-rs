@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use vault_core::core::{error::VaultError, manager::VaultManager};
 
@@ -128,7 +128,7 @@ fn main() {
                 let vault_destination = match vault_path {
                     Some(path) => PathBuf::from(path),
                     None => {
-                        // Extract filename from host_path and store in root directory
+                        // Extract filename from host_path and store in the current directory directory
                         let host_file = std::path::Path::new(&host_path);
                         let filename = host_file
                             .file_name()
@@ -189,29 +189,31 @@ struct ShellCli {
 #[derive(Subcommand, Debug)]
 enum ShellCommands {
     Unlock {
-        #[arg(index=1,short, long)]
+        #[arg(index = 1)]
         vault_name: String,
     },
     List,
     New {
-        #[arg(index=1,short, long)]
+        #[arg(index = 1, short, long)]
         vault_name: String,
         #[arg(short, long)]
         path: Option<String>,
     },
+    Destroy {
+        #[arg(index = 1, short, long)]
+        vault_name: String,
+    },
     Ls {
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        path: Option<PathBuf>,
     },
     Cd {
-        #[arg(default_value = ".")]
-        path: String,
+        path: Option<PathBuf>,
     },
     Pwd,
     Mkdir {
         path: String,
-        #[arg(short, long)]
-        parents: bool,
+        #[arg(short)]
+        recursive: bool,
     },
     Rmdir {
         path: String,
@@ -222,11 +224,7 @@ enum ShellCommands {
         path: String,
     },
     Rm {
-        path: String,
-        #[arg(short, long)]
-        force: bool,
-        #[arg(short, long)]
-        recursive: bool,
+        path: PathBuf,
     },
     Cp {
         source: String,
@@ -235,10 +233,8 @@ enum ShellCommands {
         recursive: bool,
     },
     Mv {
-        source: String,
-        destination: String,
-        #[arg(short, long)]
-        recursive: bool,
+        source: PathBuf,
+        destination: PathBuf,
     },
     Clear,
     Import {
@@ -260,7 +256,7 @@ enum ShellCommands {
 
 struct VaultShell {
     manager: VaultManager,
-    current_dir: PathBuf,
+    current_dir: Option<PathBuf>,
     active_vault_name: Option<String>,
     is_running: bool,
 }
@@ -269,7 +265,7 @@ impl VaultShell {
     fn new(manager: VaultManager) -> Self {
         VaultShell {
             manager,
-            current_dir: PathBuf::from("/"),
+            current_dir: None,
             active_vault_name: None,
             is_running: true,
         }
@@ -281,8 +277,8 @@ impl VaultShell {
 
         while self.is_running {
             let prompt = match &self.active_vault_name {
-                Some(name) => format!("{}:{}$ ", name, self.current_dir.display()),
-                None => "vault> ".to_string(),
+            Some(name) => format!("{}:{}$ ", name, self.current_dir.as_ref().unwrap().display()),
+            None => "vault> ".to_string(),
             };
 
             let line = rl.readline(&prompt)?;
@@ -290,98 +286,151 @@ impl VaultShell {
 
             // Skip empty lines
             if trimmed.is_empty() {
-                continue;
+            continue;
             }
             rl.add_history_entry(trimmed)?;
-            match ShellCli::try_parse_from(trimmed.split_whitespace()) {
-                Ok(cli) => match self.execute_command(cli.command) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        match e {
-                            VaultError::NoActiveVault => {
-                                println!("ERROR: {}", e);
-                                continue;
-                            },
-                            VaultError::ContinuingExecution => {
-                                continue;
-                            }
-                            _ => {
-                                println!("ERROR: {}", e);
-                                break;
-                            }
+            
+            if let Ok(cli) = ShellCli::try_parse_from(trimmed.split_whitespace()) {
+                if let Err(e) = self.execute_command(cli.command) {
+                    match e {
+                        VaultError::NoActiveVault => {
+                            println!("ERROR: {}", e);
+                            continue;
+                        }
+                        VaultError::ContinuingExecution => {
+                            continue;
+                        }
+                        _ => {
+                            println!("ERROR: {}", e);
+                            break;
                         }
                     }
-                },
-                Err(e) => {
-                    eprintln!("ERROR: {}", e);
-                    continue;
                 }
             }
-            
         }
         Ok(())
     }
 
-    fn resolve_path(&self, path: &str) -> PathBuf {
-        if path.starts_with("/") {
-            PathBuf::from(path)
-        } else if path == "." || path == "" {
-            self.current_dir.clone()
-        } else if path == ".." {
-            self.current_dir
-                .parent()
-                .unwrap_or(&self.current_dir)
-                .to_path_buf()
+
+    fn resolve_path(&self, path_str: &str) -> Result<PathBuf, VaultError> {
+        eprintln!("Resolving path: {}", path_str);
+        let current_dir = self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?;
+        let input_path = Path::new(path_str);
+
+        let mut resolved_path = if input_path.is_absolute() {
+            PathBuf::from("/")
         } else {
-            self.current_dir.join(path)
+            current_dir.clone()
+        };
+
+        for component in input_path.components() {
+            match component {
+                Component::Normal(name) => {
+                    resolved_path.push(name);
+                }
+                Component::ParentDir => {
+                    resolved_path.pop();
+                }
+                Component::CurDir => {
+                    // Do nothing
+                }
+                Component::RootDir => {
+                    resolved_path = PathBuf::from("/");
+                }
+                Component::Prefix(_) => {
+                    return Err(VaultError::InvalidPath);
+                }
+            }
         }
+        eprintln!("Resolved path: {}", resolved_path.display());
+        Ok(resolved_path)
+    }
+
+    fn cmd_mkdir(
+        &self,
+        folder_name: &str,
+        current_path: &Path,
+        recursive: bool,
+    ) -> Result<(), VaultError> {
+        let vault = self
+            .active_vault_name
+            .as_ref()
+            .ok_or(VaultError::NoActiveVault)?;
+        self.manager
+            .create_folder_in_vault(&vault, &current_path.join(folder_name), recursive)?;
+        Ok(())
+    }
+
+    fn cmd_mv(&self, source: &PathBuf, destination: &PathBuf) -> Result<(), VaultError> {
+        let vault = self
+            .active_vault_name
+            .as_ref()
+            .ok_or(VaultError::NoActiveVault)?;
+        self.manager.move_file(&vault, source, destination)?;
+        Ok(())
+    }
+
+    fn cmd_rm(&self, file_name: &PathBuf, current_path: &Path) -> Result<(), VaultError> {
+        let vault = self
+            .active_vault_name
+            .as_ref()
+            .ok_or(VaultError::NoActiveVault)?;
+        self.manager
+            .delete_file(&vault, &current_path.join(file_name))?;
+        Ok(())
     }
 
     fn cmd_unlock(&mut self, vault_name: &str) -> Result<(), VaultError> {
-        if let Err(e) = self.manager.vault_unlock_preflight(vault_name) {
-        match e {
-            VaultError::VaultManifestNotFound => {
-                eprintln!("Error: Vault '{}' is registered, but its files could not be found.", vault_name);
-                eprintln!("This can happen if the vault was moved, deleted, or is on a disconnected drive.");
-                
-                println!("\nWould you like to remove this vault's registration? [y/N]");
-                
-                let mut input = String::new();
-                if std::io::stdin().read_line(&mut input).is_ok() {
-                    if input.trim().eq_ignore_ascii_case("y") {
-                        println!("Removing vault registration...");
-                        match self.manager.remove_vault_registration(vault_name) {
-                            Ok(_) => println!("Successfully removed registration for '{}'.", vault_name),
-                            Err(e) => eprintln!("Failed to remove registration: {:?}", e),
+        if let Err(e) = self.manager.vault_exists_preflight(vault_name) {
+            match e {
+                VaultError::VaultManifestNotFound => {
+                    eprintln!(
+                        "Error: Vault '{}' is registered, but its files could not be found.",
+                        vault_name
+                    );
+                    eprintln!(
+                        "This can happen if the vault was moved, deleted, or is on a disconnected drive."
+                    );
+
+                    println!("\nWould you like to remove this vault's registration? [y/N]");
+
+                    let mut input = String::new();
+                    if std::io::stdin().read_line(&mut input).is_ok() {
+                        if input.trim().eq_ignore_ascii_case("y") {
+                            println!("Removing vault registration...");
+                            match self.manager.remove_vault_registration(vault_name) {
+                                Ok(_) => println!(
+                                    "Successfully removed registration for '{}'.",
+                                    vault_name
+                                ),
+                                Err(e) => eprintln!("Failed to remove registration: {:?}", e),
+                            }
+                        } else {
+                            println!("No action taken. The registration was not removed.");
                         }
-                    } else {
-                        println!("No action taken. The registration was not removed.");
                     }
                 }
+                VaultError::VaultNotFound => {
+                    eprintln!("Error: Vault '{}' is not registered.", vault_name);
+                }
+                _ => {
+                    eprintln!("An unexpected error occurred: {:?}", e);
+                }
             }
-            VaultError::VaultNotFound => {
-                eprintln!("Error: Vault '{}' is not registered.", vault_name);
-            }
-            _ => {
-                eprintln!("An unexpected error occurred: {:?}", e);
-            }
+            return Ok(());
         }
-        return Ok(());
-    }
         match rpassword::prompt_password("Enter the password for the vault: ") {
-            Ok(password) => {
-                match self.manager.unlock_vault(vault_name, &password) {
-                    Ok(_) => {
-                        self.active_vault_name = Some(vault_name.to_string());
-                        self.current_dir = PathBuf::from("/");
-                        println!("Vault '{}' unlocked successfully.", vault_name);
-                    }
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        return Err(VaultError::ContinuingExecution);
-                    }
+            Ok(password) => match self.manager.unlock_vault(vault_name, &password) {
+                Ok(_) => {
+                    self.active_vault_name = Some(vault_name.to_string());
+                    self.current_dir = Some(PathBuf::from("/"));
+                    println!("Vault '{}' unlocked successfully.", vault_name);
                 }
-            }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return Err(VaultError::ContinuingExecution);
+                }
+            },
             Err(_) => {
                 eprintln!("Failed to read password.");
             }
@@ -405,7 +454,7 @@ impl VaultShell {
         Ok(())
     }
 
-    fn cmd_ls(&self, path: &Path) -> Result<(), VaultError> {
+    fn cmd_ls(&self, path: Option<&Path>) -> Result<(), VaultError> {
         let active_vault = match &self.active_vault_name {
             Some(name) => name,
             None => {
@@ -413,7 +462,12 @@ impl VaultShell {
             }
         };
 
-        let files: Vec<String> = self.manager.list_files_from_vault(active_vault, path)?;
+        let path= match path {
+            Some(p) => self.resolve_path(p.to_str().unwrap())?,
+            None => self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?.clone(),
+        };
+
+        let files: Vec<String> = self.manager.list_files_from_vault(active_vault, &path)?;
 
         if files.is_empty() {
             println!("No files found.");
@@ -439,13 +493,14 @@ impl VaultShell {
                     VaultError::UnableToAccessLocation(host_path.to_string_lossy().to_string())
                 })?;
 
-                let final_vault_path = vault_path
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| PathBuf::from("/").join(host_path.file_name().unwrap()));
-
+                let final_vault_path = if let Some(path) = vault_path {
+                    path
+                } else {
+                    self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?
+                };
+                let destination_path = final_vault_path.join(host_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("unnamed_file")));
                 self.manager
-                    .import_file(vault_name, &final_vault_path, &content)?;
+                    .import_file(vault_name, &destination_path, &content)?;
                 Ok(())
             }
             None => Err(VaultError::NoActiveVault),
@@ -456,21 +511,32 @@ impl VaultShell {
         &mut self,
         vault_path: &Path,
         vault_name: &str,
-        host_path: Option<PathBuf>
-    )->Result<(),VaultError>{
-        match self.manager.export_file(vault_name, &vault_path){
-            Ok(content)=>{
-                let final_host_path= host_path.unwrap_or_else(||{
-                    let filename= vault_path.file_name().unwrap_or(std::ffi::OsStr::new("exported_file"));
-                    std::env::current_dir().unwrap().join(filename)
-                });
-                std::fs::write(&final_host_path,content).map_err(|e|VaultError::Io(e))?;
-                println!("File exported to {}",final_host_path.display());
+        host_path: Option<PathBuf>,
+    ) -> Result<(), VaultError> {
+        match self.manager.export_file(vault_name, vault_path) {
+            Ok(content) => {
+                // Figure out a default filename
+                let filename = vault_path
+                    .file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("exported_file"));
+
+                // Resolve the host path
+                let final_host_path = match host_path {
+                    Some(path) => {
+                        if path.is_dir() {
+                            path.join(filename)
+                        } else {
+                            path
+                        }
+                    }
+                    None => std::env::current_dir().unwrap().join(filename),
+                };
+
+                std::fs::write(&final_host_path, content).map_err(VaultError::Io)?;
+                println!("File exported to {}", final_host_path.display());
                 Ok(())
             }
-            Err(e)=>{
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -506,6 +572,38 @@ impl VaultShell {
             .expect("Failed to add vault");
         Ok(())
     }
+    fn cmd_cd(&mut self, path: &PathBuf) ->Result<(), VaultError> {
+        let final_path = self.resolve_path(path.to_str().unwrap())?;
+        println!("Changing directory to: {}", final_path.display());
+        self.current_dir = Some(final_path);
+        println!(
+            "Changed directory to: {}",
+            self.current_dir.as_ref().unwrap().display()
+        );
+        Ok(())
+    }
+
+    fn cmd_destroy(&mut self, vault_name: &str) -> Result<(), VaultError> {
+        println!(
+            "! DANGER: You are about to permanently delete the vault '{}' and all of its contents.",
+            vault_name
+        );
+        println!("! This action is irreversible.");
+        println!(
+            "! To confirm, please type the name of the vault ('{}'):",
+            vault_name
+        );
+        let mut confirmation = String::new();
+        std::io::stdin().read_line(&mut confirmation).unwrap();
+        if confirmation.trim().eq(vault_name) {
+            self.manager.delete_vault(vault_name)?;
+            self.manager.remove_vault_registration(vault_name)?;
+            println!("Vault '{}' has been deleted.", vault_name);
+        } else {
+            println!("Vault deletion cancelled.");
+        }
+        Ok(())
+    }
 
     fn execute_command(&mut self, command: ShellCommands) -> Result<(), VaultError> {
         match command {
@@ -516,7 +614,13 @@ impl VaultShell {
                 self.cmd_list()?;
             }
             ShellCommands::Ls { path } => {
-                self.cmd_ls(&path)?;
+                if let Some(p) = &path {
+                    eprintln!("Recieved Argument: {}", p.display());
+                    self.cmd_ls(Some(p.as_path()))?;
+                } else {
+                    eprintln!("No path argument provided, using current directory.");
+                    self.cmd_ls(Some(self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?.as_path()))?;
+                }
             }
             ShellCommands::New { vault_name, path } => {
                 self.cmd_new(&vault_name, &path)?;
@@ -535,7 +639,7 @@ impl VaultShell {
                 };
 
                 self.cmd_import(&host_path, &name, &vault_path)?;
-            },
+            }
             ShellCommands::Export {
                 host_path,
                 vault_name,
@@ -550,13 +654,47 @@ impl VaultShell {
                 };
 
                 self.cmd_export(&vault_path, &name, host_path)?;
-            },
-          
+            }
+
             ShellCommands::Exit => {
                 std::process::exit(0);
             }
             ShellCommands::Pwd => {
-                println!("{}", self.current_dir.display());
+                println!(
+                    "{}",
+                    self.current_dir
+                        .as_ref()
+                        .ok_or(VaultError::NoActiveVault)?
+                        .display()
+                );
+            }
+            ShellCommands::Destroy { vault_name } => {
+                self.cmd_destroy(&vault_name)?;
+            }
+            ShellCommands::Mkdir { path, recursive } => {
+                self.cmd_mkdir(
+                    &path,
+                    &self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?,
+                    recursive,
+                )?;
+            }
+            ShellCommands::Rm { path } => {
+                self.cmd_rm(&path, &self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?)
+                    .map_err(|e| {
+                        eprintln!("Error removing file: {}", e);
+                        VaultError::ContinuingExecution
+                    })?;
+            }
+            ShellCommands::Cd { path } => {
+                let new_path = self.resolve_path(&path.unwrap().to_str().unwrap());
+                // Here we would normally check if the directory exists in the vault
+                self.cmd_cd(&new_path.unwrap())?;
+            }
+            ShellCommands::Mv {
+                source,
+                destination,
+            } => {
+                self.cmd_mv(&source, &destination)?;
             }
             _ => {
                 eprintln!("Command not implemented yet: {:?}", command);
