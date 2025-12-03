@@ -63,7 +63,7 @@ pub struct VaultDirectory {
     version: usize,
     vaults: HashMap<String, VaultDirInfo>,
 }
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut manager = VaultManager::init().expect("Failed to initialize VaultManager");
     let cli = Cli::parse();
     let current_dir = std::env::current_dir().expect("Failed to get current directory");
@@ -76,7 +76,7 @@ fn main() {
                         p
                     } else {
                         eprintln!("Invalid path format. Use local://<path> for local files.");
-                        return;
+                        return Err(VaultError::InvalidPath.into());
                     }
                 }
                 None => {
@@ -90,7 +90,7 @@ fn main() {
                 .expect("Failed to read password");
             if password != repeat_password {
                 eprintln!("Passwords do not match. Please try again.");
-                return;
+                return Err(VaultError::Generic("Passwords do not match".to_string()).into());
             }
             println!("Adding vault '{}' at path '{}'", name, path);
             manager
@@ -173,9 +173,11 @@ fn main() {
         }
         Commands::Shell => {
             let mut shell = VaultShell::new(manager);
-            shell.run();
+            shell.run()?;
         }
+
     }
+    Ok(())
 }
 
 #[derive(Parser, Debug)]
@@ -212,8 +214,6 @@ enum ShellCommands {
     Pwd,
     Mkdir {
         path: String,
-        #[arg(short)]
-        recursive: bool,
     },
     Rmdir {
         path: String,
@@ -350,14 +350,13 @@ impl VaultShell {
         &self,
         folder_name: &str,
         current_path: &Path,
-        recursive: bool,
     ) -> Result<(), VaultError> {
         let vault = self
             .active_vault_name
             .as_ref()
             .ok_or(VaultError::NoActiveVault)?;
         self.manager
-            .create_folder_in_vault(&vault, &current_path.join(folder_name), recursive)?;
+            .create_folder_in_vault(&vault, &current_path.join(folder_name))?;
         Ok(())
     }
 
@@ -671,11 +670,11 @@ impl VaultShell {
             ShellCommands::Destroy { vault_name } => {
                 self.cmd_destroy(&vault_name)?;
             }
-            ShellCommands::Mkdir { path, recursive } => {
+            ShellCommands::Mkdir { path } => {
                 self.cmd_mkdir(
                     &path,
                     &self.current_dir.as_ref().ok_or(VaultError::NoActiveVault)?,
-                    recursive,
+                    
                 )?;
             }
             ShellCommands::Rm { path } => {

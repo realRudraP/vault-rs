@@ -1,7 +1,7 @@
 use crate::core::cache::DirectoryCache;
 use crate::core::crypto::{self, SecureKey, decrypt, encrypt, generate_dek};
 use crate::core::error::VaultError;
-use crate::core::storage::{StorageBackend, connect};
+use crate::core::storage::{StorageBackend};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -123,7 +123,7 @@ impl UnlockedVault {
         let manifest_json =
             serde_json::to_string(&manifest).map_err(|_| VaultError::Serialization)?;
         storage.store_blob("vault.manifest", manifest_json.as_bytes())?;
-        let mut directory_cache = DirectoryCache::new(CACHE_SIZE);
+        let directory_cache = DirectoryCache::new(CACHE_SIZE);
         directory_cache.init(root_listing.clone());
 
         Ok(Self {
@@ -356,7 +356,7 @@ impl UnlockedVault {
         Ok(files)
     }
 
-    pub fn create_folder(&self, path: &Path, recursive: bool) -> Result<(), VaultError> {
+    pub fn create_folder(&self, path: &Path) -> Result<(), VaultError> {
         let parent = path.parent().unwrap_or(Path::new("/"));
         eprintln!("(vault) Creating folder in path: {}", parent.display());
 

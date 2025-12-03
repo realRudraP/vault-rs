@@ -9,12 +9,11 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::core::crypto::SecureKey;
 use crate::core::error::VaultError;
-use crate::core::storage::{self, StorageBackend, connect};
-use crate::core::vault::{self, DirectoryListing, UnlockedVault};
+use crate::core::storage::connect;
+use crate::core::vault::UnlockedVault;
 use directories_next::ProjectDirs;
-use serde::{Deserialize, Serialize, ser};
+use serde::{Deserialize, Serialize};
 
 const MANIFEST_FILENAME: &str = "vault-rs.manifest.json";
 // Individual vault information is stored in the VaultInfo struct.
@@ -141,7 +140,8 @@ impl VaultManager {
 
             let storage = connect(&uri)?;
 
-            let unlocked_vault: UnlockedVault = UnlockedVault::create(storage, &password)?;
+            // Discard the current vault for now, future implementation will return it and mark it active
+            let _unlocked_vault: UnlockedVault = UnlockedVault::create(storage, &password)?;
 
             let vault_info = VaultInfo {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -320,13 +320,12 @@ impl VaultManager {
         &self,
         vault_name: &str,
         folder_path: &Path,
-        recursive: bool,
     ) -> Result<(), VaultError> {
         let vault = self
             .unlocked_vaults
             .get(vault_name)
             .ok_or(VaultError::VaultNotFound)?;
-        vault.create_folder(folder_path, recursive)?;
+        vault.create_folder(folder_path)?;
         Ok(())
     }
 

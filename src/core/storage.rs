@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::{ PathBuf};
 
 use super::error::VaultError;
 use super::manager::{StorageLocations, URIParser};
@@ -40,8 +40,8 @@ pub fn connect(uri: &URIParser) -> Result<Box<dyn StorageBackend>, VaultError> {
             let backend = LocalStorageBackend::new(path.clone())?;
             Ok(Box::new(backend))
         }
-        StorageLocations::S3(ref bucket) => {
-            // Here you would implement the S3 storage backend
+        StorageLocations::S3(ref _bucket) => {
+            // S3 Bucket's implementation goes here
             Err(VaultError::NotImplemented)
         }
     }
